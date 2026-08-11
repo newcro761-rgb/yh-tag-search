@@ -1113,11 +1113,16 @@
     }
     (lookupData.pinned_drawings || []).forEach(function (d) { upsert(d.dwg_no, d.title, 0); });
     (lookupData.field_instruments || []).forEach(function (fi) { if (fi.pid_dwg_no) upsert(fi.pid_dwg_no, fi.service_desc, 1); });
+    (lookupData.field_instruments || []).forEach(function (fi) {
+      if (fi.vendor_dwg_resolved && fi.vendor_dwg_resolved.kosep_id) {
+        upsert(fi.vendor_dwg_resolved.kosep_id, fi.vendor_dwg_resolved.title, 1.5);
+      }
+    });
     (lookupData.candidate_drawings || []).forEach(function (d) { upsert(d.dwg_no || d.kosep_id, d.title, 2); });
     return order.map(function (k) { return byNo[k]; });
   }
 
-  var TIER_LABEL = { 0: '확정', 1: '계기대장 P&ID', 2: '계통 추정' };
+  var TIER_LABEL = { 0: '확정', 1: '계기대장 P&ID', 1.5: '제작사(OEM) 도면', 2: '계통 추정' };
 
   // ======================================================================
   // §6 렌더링 — 순수 함수, textContent 기반 (XSS/CSP 안전)
@@ -1384,6 +1389,11 @@
         row('공급사', fi.supplier);
         row('비고', fi.remarks);
         row('계기 배치도 번호(참고용)', fi.pid_dwg_no);
+        if (fi.vendor_dwg_resolved) {
+          var vdr = fi.vendor_dwg_resolved;
+          row('제작사(OEM) 설치도면', vdr.kosep_id + (vdr.title ? ' — ' + cleanStr(vdr.title) : '') +
+            (vdr.file_path ? ' [열람 가능]' : ' [목록만 확인됨, 실물 미변환]'));
+        }
         return el('div', { class: 'instrument-block' }, [
           instruments.length > 1 ? el('div', { class: 'instrument-heading', text: (idx + 1) + '. ' + cleanStr(fi.raw_tag || fi.instr_type) }) : null,
           el('dl', { class: 'kv-list' }, rows)
