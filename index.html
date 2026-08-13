@@ -436,6 +436,7 @@
   .manual-item { font-size: 13.5px; padding: 8px 0; border-top: 1px solid var(--border); }
   .manual-item:first-child { border-top: none; }
   .manual-page { font-family: var(--font-mono); color: var(--fg-faint); font-size: 12px; }
+  .manual-excerpt { color: var(--fg-muted); font-size: 12.5px; margin-top: 4px; line-height: 1.5; }
 
   .diag-line { font-family: var(--font-mono); font-size: 11.5px; color: var(--fg-faint); padding: 3px 0; word-break: break-all; }
 
@@ -585,7 +586,7 @@
         id="searchInput"
         type="search"
         name="tag"
-        placeholder="설비 태그 입력 (예: CW-MV03B)"
+        placeholder="설비 태그 또는 로직 키워드 입력 (예: CW-MV03B, Governor Free)"
         autocapitalize="characters"
         autocorrect="off"
         spellcheck="false"
@@ -676,7 +677,8 @@
   var EXAMPLE_TAGS = [
     { value: 'CW-MV03B', label: 'CW-MV03B' },
     { value: 'HO-PSLL41A', label: 'HO-PSLL41A' },
-    { value: 'MS-PT', label: 'MS-PT (번호 생략 검색)' }
+    { value: 'MS-PT', label: 'MS-PT (번호 생략 검색)' },
+    { value: 'Governor Free', label: 'Governor Free (로직 키워드 검색)' }
   ];
 
   var results = document.getElementById('results');
@@ -947,6 +949,12 @@
       .then(function (data) { logCall('lookup_tag(' + gen.forLookup + ') OK'); return data; })
       .catch(function (err) { logCall('lookup_tag(' + gen.forLookup + ') FAIL: ' + err.message); return null; });
 
+    // 로직해설서 자유검색 — 태그든 키워드("Governor Free" 등)든 입력 원문 그대로 병렬 조회.
+    // 태그 검색 흐름과 완전히 독립적이라 실패해도 나머지 결과에 영향 없음.
+    var manualSearchPromise = callTool('search_manual', { query: rawInput.trim() })
+      .then(function (data) { logCall('search_manual(' + rawInput.trim() + ') -> ' + ((data.results || []).length) + '건'); return data; })
+      .catch(function (err) { logCall('search_manual FAIL: ' + err.message); return null; });
+
     var searchPromises = gen.variants.map(function (v) {
       return callTool('search_logic', { query: v, logic_book: primaryBook })
         .then(function (data) {
@@ -959,9 +967,10 @@
         });
     });
 
-    return Promise.all([lookupPromise, Promise.all(searchPromises)]).then(function (res) {
+    return Promise.all([lookupPromise, Promise.all(searchPromises), manualSearchPromise]).then(function (res) {
       var lookupData = res[0];
       var searchResults = res[1];
+      var manualData = res[2];
 
       var anyLogicHit = searchResults.some(function (r) { return r.data && (r.data.results || []).length > 0; });
       var lookupHasUsages = lookupData && lookupData.usages_total > 0;
@@ -980,22 +989,24 @@
             });
         });
         return Promise.all(fallbackPromises).then(function (fbResults) {
-          return finalize(rawInput, gen, lookupData, searchResults.concat(fbResults), callLog);
+          return finalize(rawInput, gen, lookupData, searchResults.concat(fbResults), callLog, manualData);
         });
       }
-      return finalize(rawInput, gen, lookupData, searchResults, callLog);
+      return finalize(rawInput, gen, lookupData, searchResults, callLog, manualData);
     });
   }
 
-  function finalize(rawInput, gen, lookupData, searchResults, callLog) {
+  function finalize(rawInput, gen, lookupData, searchResults, callLog, manualData) {
     var merged = mergeLogicSheets(lookupData, searchResults);
     var drawings = mergeDrawings(lookupData);
+    var manualSearch = (manualData && manualData.results) || [];
     return {
       rawInput: rawInput,
       gen: gen,
       lookup: lookupData,
       logicSheets: merged,
       drawings: drawings,
+      manualSearch: manualSearch,
       callLog: callLog
     };
   }
@@ -1156,7 +1167,7 @@
     clear(results);
     var wrap = el('div', { class: 'intro' }, [
       el('h1', { text: '설비 태그로 도면·로직·계기 정보를 찾습니다' }),
-      el('p', { text: '태그를 입력하면 P&ID 도면번호, 로직 사용처(트립/인터록 포함), 현장계기 제조사·모델을 한 번에 조회합니다.' }),
+      el('p', { text: '태그를 입력하면 P&ID 도면번호, 로직 사용처(트립/인터록 포함), 현장계기 제조사·모델을 한 번에 조회합니다. Governor Free처럼 로직 키워드로도 검색됩니다(터빈 로직해설서 234페이지 수록).' }),
       el('p', { class: 'chip-label', text: '예시 태그' }),
       el('div', { class: 'chip-row' }, EXAMPLE_TAGS.map(function (ex) {
         return el('button', { class: 'chip', type: 'button', onclick: function () { searchInput.value = ex.value; doSearch(ex.value); } }, [ex.label]);
@@ -1273,9 +1284,10 @@
     var relatedDrawings = (lookup && lookup.related_drawings) || {};
     var logicSheets = result.logicSheets;
     var drawings = result.drawings;
+    var manualSearch = result.manualSearch || [];
 
     var hasAnything = instruments.length || logicSheets.length || drawings.length ||
-      manualMentions.length || Object.keys(relatedDrawings).length;
+      manualMentions.length || manualSearch.length || Object.keys(relatedDrawings).length;
 
     if (!hasAnything) {
       renderEmpty(result.rawInput, result.gen);
@@ -1447,6 +1459,25 @@
         el('div', { class: 'details-body no-pad-top' }, mmItems)
       ]);
       results.appendChild(mmDetails);
+    }
+
+    // ⑦-2 로직해설서 검색결과 (자유 검색어 기반, search_manual)
+    if (manualSearch.length) {
+      var msItems = manualSearch.map(function (m) {
+        return el('div', { class: 'manual-item' }, [
+          el('span', { class: 'manual-page', text: 'p.' + m.page + '  ' }),
+          cleanStr(m.heading),
+          m.excerpt ? el('div', { class: 'manual-excerpt', text: cleanStr(m.excerpt) }) : null
+        ]);
+      });
+      var msDetails = el('details', { class: 'card', open: 'true' }, [
+        el('summary', {}, [
+          el('span', { text: '로직해설서 검색결과' }),
+          el('span', { class: 'count', text: manualSearch.length + '건' })
+        ]),
+        el('div', { class: 'details-body no-pad-top' }, msItems)
+      ]);
+      results.appendChild(msDetails);
     }
 
     // ⑧ 진단 정보 (접힘)
