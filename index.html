@@ -339,6 +339,20 @@
     min-height: 36px;
   }
   .pid-copy.copied { background: var(--confirmed-bg); color: var(--confirmed-fg); border-color: transparent; }
+  .pid-open {
+    flex-shrink: 0;
+    border: 1px solid transparent;
+    background: var(--confirmed-bg);
+    color: var(--confirmed-fg);
+    border-radius: 7px;
+    padding: 7px 11px;
+    font-size: 12px;
+    font-weight: 600;
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+  }
   .pid-title { font-size: 13px; color: var(--fg-muted); margin-top: 4px; }
   .pid-confidence { font-size: 11px; color: var(--fg-faint); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
 
@@ -671,6 +685,24 @@
   // ======================================================================
   function initApp() {
   var MCP_URL = 'https://plant-assistant-mcp.newcro761.workers.dev/mcp/2Gr6faXzdeHBxjNbc1kU7YCrufw42BmmRvtdEHRBbfkweMKwSF5vEckX0_WWT9bO';
+
+  // 도면 파일 서빙 베이스 URL(미니PC rclone serve + Cloudflare Tunnel).
+  // 비워두면 '열기' 링크를 아예 만들지 않는다 — 주소가 정해지면 여기만 채우면 된다.
+  var DRAWING_BASE_URL = '';
+
+  // file_path는 구글드라이브 '003 업무' 기준 상대경로이고 한글·공백을 포함한다.
+  // 세그먼트별로 인코딩해야 슬래시가 보존된다(전체를 한 번에 인코딩하면 깨짐).
+  function drawingUrl(filePath) {
+    if (!DRAWING_BASE_URL || !filePath) return null;
+    // DB에 맥 절대경로가 남아 있는 행이 있어 Worker에서 정규화하고 있지만,
+    // 혹시 새는 값이 있어도 링크가 깨지지 않도록 여기서도 한 번 더 자른다.
+    var rel = String(filePath).split(String.fromCharCode(92)).join('/');
+    var i = rel.indexOf('003 업무/');
+    if (i >= 0) rel = rel.slice(i + '003 업무/'.length);
+    rel = rel.replace(/^\/+/, '');
+    return DRAWING_BASE_URL.replace(/\/+$/, '') + '/' +
+      rel.split('/').map(encodeURIComponent).join('/');
+  }
   var CALL_TIMEOUT_MS = 15000;
   var RECENT_KEY = 'tagsearch-recent';
   var THEME_KEY = 'tagsearch-theme';
@@ -1108,28 +1140,30 @@
     var byNo = {};
     var order = [];
     function keyOf(no) { return cleanStr(no).replace(/\s+/g, '').toUpperCase(); }
-    function upsert(no, title, tier) {
+    function upsert(no, title, tier, filePath) {
       no = cleanStr(no);
       if (!no) return;
       var k = keyOf(no);
       var rec = byNo[k];
       if (!rec) {
-        rec = { dwg_no: no, title: cleanStr(title), tier: tier };
+        rec = { dwg_no: no, title: cleanStr(title), tier: tier, file_path: filePath || null };
         byNo[k] = rec;
         order.push(k);
       } else {
         if (tier < rec.tier) { rec.tier = tier; if (title) rec.title = cleanStr(title); }
         if (!rec.title && title) rec.title = cleanStr(title);
+        // 같은 도면번호가 여러 티어에서 들어올 수 있다. 실물 경로는 먼저 발견된 것을 유지.
+        if (!rec.file_path && filePath) rec.file_path = filePath;
       }
     }
-    (lookupData.pinned_drawings || []).forEach(function (d) { upsert(d.dwg_no, d.title, 0); });
+    (lookupData.pinned_drawings || []).forEach(function (d) { upsert(d.dwg_no, d.title, 0, d.file_path); });
     (lookupData.field_instruments || []).forEach(function (fi) { if (fi.pid_dwg_no) upsert(fi.pid_dwg_no, fi.service_desc, 1); });
     (lookupData.field_instruments || []).forEach(function (fi) {
       if (fi.vendor_dwg_resolved && fi.vendor_dwg_resolved.kosep_id) {
-        upsert(fi.vendor_dwg_resolved.kosep_id, fi.vendor_dwg_resolved.title, 1.5);
+        upsert(fi.vendor_dwg_resolved.kosep_id, fi.vendor_dwg_resolved.title, 1.5, fi.vendor_dwg_resolved.file_path);
       }
     });
-    (lookupData.candidate_drawings || []).forEach(function (d) { upsert(d.dwg_no || d.kosep_id, d.title, 2); });
+    (lookupData.candidate_drawings || []).forEach(function (d) { upsert(d.dwg_no || d.kosep_id, d.title, 2, d.file_path); });
     return order.map(function (k) { return byNo[k]; });
   }
 
@@ -1321,9 +1355,13 @@
           copyBtn.classList.add('copied');
           setTimeout(function () { copyBtn.textContent = '복사'; copyBtn.classList.remove('copied'); }, 1400);
         });
+        // 실물 파일이 없으면(file_path null) 링크를 만들지 않는다 — 번호만 맞고
+        // 파일이 없는 경우가 많아(계장루프배선도 등) 깨진 링크가 되기 때문.
+        var openUrl = drawingUrl(d.file_path);
         return el('div', { class: 'pid-item' }, [
           el('div', { class: 'pid-number-row' }, [
             el('div', { class: 'pid-number', text: d.dwg_no }),
+            openUrl ? el('a', { class: 'pid-open', href: openUrl, target: '_blank', rel: 'noopener' }, ['열기']) : null,
             copyBtn
           ]),
           d.title ? el('div', { class: 'pid-title', text: d.title }) : null,
