@@ -143,6 +143,7 @@
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; padding: 0; }
   body {
     background: var(--bg);
@@ -783,34 +784,25 @@
   }
 
   function parseSse(rawText) {
-    var lines = rawText.split(/\r?\n/);
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      if (line.indexOf('data: ') === 0) {
-        var payload = line.slice(6);
-        if (payload === '[DONE]') continue;
-        var envelope;
-        try { envelope = JSON.parse(payload); }
-        catch (e) { continue; }
-        if (envelope.error) throw new McpError('rpc', envelope.error.message || 'RPC_ERROR', envelope.error);
-        var content = envelope.result && envelope.result.content && envelope.result.content[0];
-        var text = content && content.text;
-        if (!text) return envelope.result;
-        try { return JSON.parse(text); }
-        catch (e) { return { _raw: text }; }
-      }
+    var payloads = rawText.split(/\r?\n/).filter(function (line) { return /^data:/.test(line); })
+      .map(function (line) { return line.slice(5).trim(); }).filter(function (line) { return line !== '[DONE]'; });
+    if (!payloads.length) payloads = [rawText];
+    for (var i = 0; i < payloads.length; i++) {
+      var envelope;
+      try { envelope = JSON.parse(payloads[i]); } catch (e) { continue; }
+      if (envelope.error) throw new McpError('rpc', envelope.error.message || 'RPC_ERROR');
+      if (!envelope.result) continue;
+      var result = envelope.result;
+      if (result.isError) throw new McpError('rpc', '조회 도구가 오류를 반환했습니다.');
+      var content = result.content && result.content[0];
+      if (!content || typeof content.text !== 'string') throw new McpError('parse', 'EMPTY_RESPONSE');
+      var data;
+      try { data = JSON.parse(content.text); } catch (e) { throw new McpError('parse', 'INVALID_TOOL_JSON'); }
+      if (!data || typeof data !== 'object') throw new McpError('parse', 'INVALID_TOOL_DATA');
+      if (data.error) throw new McpError('rpc', String(data.error));
+      return data;
     }
-    // data: 라인이 없으면 전체를 JSON으로 시도
-    try {
-      var whole = JSON.parse(rawText);
-      if (whole.error) throw new McpError('rpc', whole.error.message || 'RPC_ERROR', whole.error);
-      var c2 = whole.result && whole.result.content && whole.result.content[0];
-      var t2 = c2 && c2.text;
-      if (t2) { try { return JSON.parse(t2); } catch (e) { return { _raw: t2 }; } }
-      return whole.result || whole;
-    } catch (e) {
-      throw new McpError('parse', 'NO_DATA_LINE');
-    }
+    throw new McpError('parse', 'NO_RESULT');
   }
 
   function isSessionError(res, err) {
@@ -886,7 +878,7 @@
     return { unit: m[1] || '', sys: m[2], type: m[3] };
   }
 
-  var BASE_TAG_SCAN_MAX = 15;
+
 
   function generateVariants(rawInput) {
     var norm = normalizeInput(rawInput);
@@ -919,47 +911,14 @@
   // §4 검색 실행 — 병렬 + 단계적 확대
   // ======================================================================
 
-  // 접미 번호 없는 베이스 태그(예: MS-PT, HC-PT) 입력 시: 01~15 × (무접미/A/B/C)를 병렬 조회해 실제 존재하는 태그만 추림
-  // HC-PT01(무접미)과 HC-PT01A/B(호기·계열별 A/B/C)가 같은 번호대에 별도로 존재하는 경우가 있어 접미사도 함께 탐색해야 누락이 없다.
-  var BASE_TAG_SFX = ['', 'A', 'B', 'C'];
-
-  function runBaseTagScan(rawInput, base) {
-    var startTs = Date.now();
-    var callLog = [];
-    function logCall(desc) { callLog.push(desc + ' (' + (Date.now() - startTs) + 'ms)'); }
-    var prefix = base.unit ? base.unit + base.sys + '-' + base.type : base.sys + '-' + base.type;
-
-    var candidates = [];
-    for (var i = 1; i <= BASE_TAG_SCAN_MAX; i++) {
-      var numStr = i < 10 ? '0' + i : String(i);
-      BASE_TAG_SFX.forEach(function (sfx) { candidates.push(prefix + numStr + sfx); });
-    }
-
-    var scanPromises = candidates.map(function (tag) {
-      return callTool('lookup_tag', { tag: tag })
-        .then(function (data) {
-          var fi = (data.field_instruments || [])[0];
-          var found = !!fi || (data.pinned_drawings || []).length > 0;
-          logCall('lookup_tag(' + tag + ') -> ' + (found ? '존재' : '없음'));
-          return found ? { tag: tag, data: data, instrument: fi || null } : null;
-        })
-        .catch(function (err) {
-          logCall('lookup_tag(' + tag + ') FAIL: ' + err.message);
-          return null;
-        });
-    });
-
-    return Promise.all(scanPromises).then(function (results) {
-      var found = results.filter(Boolean);
-      found.sort(function (a, b) { return a.tag.localeCompare(b.tag, undefined, { numeric: true }); });
-      return {
-        isBaseScan: true,
-        rawInput: rawInput,
-        prefix: prefix,
-        scannedUpTo: BASE_TAG_SCAN_MAX,
-        found: found,
-        callLog: callLog
-      };
+  function runBaseTagScan(rawInput, base, offset) {
+    var prefix = base.sys + '-' + base.type;
+    return callTool('search_tags', { prefix: prefix, offset: offset || 0, limit: 100 }).then(function (data) {
+      if (!Array.isArray(data.results)) throw new McpError('parse', 'INVALID_TAG_RESULTS');
+      return { isBaseScan: true, rawInput: rawInput, prefix: data.prefix, total: data.total,
+        nextOffset: data.next_offset, found: data.results.map(function (row) {
+          return { tag: row.base_tag, instrument: row };
+        }) };
     });
   }
 
@@ -1029,10 +988,19 @@
   }
 
   function finalize(rawInput, gen, lookupData, searchResults, callLog, manualData) {
+    var failures = [];
+    if (!lookupData) failures.push('태그·도면·계기 정보');
+    if (!manualData) failures.push('로직해설서');
+    searchResults.forEach(function (r) { if (!r.data && failures.indexOf('로직 검색') < 0) failures.push('로직 검색'); });
+    if (lookupData && lookupData.warnings) failures = failures.concat(lookupData.warnings);
+    if (!lookupData && !manualData && !searchResults.some(function (r) { return !!r.data; })) {
+      throw new McpError('network', '모든 조회 요청이 실패했습니다.');
+    }
     var merged = mergeLogicSheets(lookupData, searchResults);
     var drawings = mergeDrawings(lookupData);
     var manualSearch = (manualData && manualData.results) || [];
     return {
+      failures: failures,
       rawInput: rawInput,
       gen: gen,
       lookup: lookupData,
@@ -1074,7 +1042,7 @@
     if (lookupData) {
       (lookupData.usages || []).forEach(function (u) {
         var key = u.logic_book + '|' + u.drop_no + '|' + u.sheet_no;
-        upsert(key, { logic_book: u.logic_book, drop_no: u.drop_no, sheet_no: u.sheet_no, isSource: u.is_source }, 'usage', null);
+        upsert(key, { logic_book: u.logic_book, drop_no: u.drop_no, sheet_no: u.sheet_no, title: u.title, pdf_page: u.pdf_page, isSource: u.is_source }, 'usage', null);
       });
       (lookupData.sheets_with_tag_in_title || []).forEach(function (s) {
         var key = s.logic_book + '|' + s.drop_no + '|' + s.sheet_no;
@@ -1274,7 +1242,7 @@
     if (!result.found.length) {
       var block = el('div', { class: 'card state-block' }, [
         el('div', { class: 'state-title', text: '"' + result.prefix + '"로 시작하는 태그를 찾지 못했습니다' }),
-        el('div', { class: 'state-desc', text: result.prefix + '01 ~ ' + result.prefix + (result.scannedUpTo < 10 ? '0' : '') + result.scannedUpTo + ' 범위를 조회했지만 존재하는 계기가 없습니다. 번호를 알고 계시면 직접 입력해 주세요 (예: ' + result.prefix + '01).' })
+        el('div', { class: 'state-desc', text: '현재 계기·신호·도면 태그 색인에 일치하는 태그가 없습니다. 접두어 표기를 확인해 주세요.' })
       ]);
       results.appendChild(block);
       return;
@@ -1282,7 +1250,7 @@
 
     var intro = el('div', { class: 'card card-pad' }, [
       el('p', { class: 'summary-tag', text: result.prefix }),
-      el('p', { class: 'summary-desc', text: '번호가 생략되어 ' + result.prefix + '01~' + result.scannedUpTo + '을 A/B/C 계열까지 조회했습니다. 존재하는 계기 ' + result.found.length + '건을 찾았습니다. 원하는 태그를 선택하세요.' })
+      el('p', { class: 'summary-desc', text: '색인에서 전체 ' + result.total + '건을 찾았습니다. 현재 ' + result.found.length + '건 표시 중입니다. 원하는 태그를 선택하세요.' })
     ]);
     results.appendChild(intro);
 
@@ -1307,6 +1275,37 @@
       el('div', { class: 'card logic-list' }, items)
     ]);
     results.appendChild(listCard);
+    if (result.nextOffset != null) {
+      var more = el('button', { class: 'retry-btn', type: 'button', text: '태그 더 보기', onclick: function () {
+        more.disabled = true;
+        var token = currentToken;
+        runBaseTagScan(result.rawInput, parseBaseTag(normalizeInput(result.prefix)), result.nextOffset).then(function (next) {
+          if (token !== currentToken) return;
+          next.found = result.found.concat(next.found);
+          renderBaseScan(next);
+        }).catch(function () {
+          if (token !== currentToken) return;
+          more.textContent = '추가 조회 실패 · 다시 시도'; more.disabled = false;
+        });
+      } });
+      results.appendChild(more);
+    }
+  }
+
+  function renderPartial(result) {
+    var failures = result.failures || [];
+    if (!failures.length) return;
+    results.appendChild(el('div', { class: 'card card-pad', role: 'status' }, [
+      el('strong', { text: '일부 조회 실패' }),
+      el('p', { text: failures.join(' · ') + ' 정보를 확인하지 못했습니다. 검색 결과가 누락되어 있을 수 있습니다.' }),
+      el('button', { class: 'retry-btn', type: 'button', onclick: function () { doSearch(result.rawInput); } }, ['다시 시도'])
+    ]));
+  }
+
+  function logicPageUrl(sheet) {
+    var files = { MAIN: 'LOGIC_Main_20240319.pdf', FGD: 'LOGIC_FGD_20240319.pdf' };
+    if (!files[sheet.logic_book] || !Number.isInteger(sheet.pdf_page) || sheet.pdf_page < 1) return null;
+    return drawingUrl('001 계측제어/01 TBN/003 Software/02 Control/' + files[sheet.logic_book]) + '#page=' + sheet.pdf_page;
   }
 
   function renderResults(result) {
@@ -1323,11 +1322,13 @@
     var hasAnything = instruments.length || logicSheets.length || drawings.length ||
       manualMentions.length || manualSearch.length || Object.keys(relatedDrawings).length;
 
+    if (!hasAnything && (result.failures || []).length) { renderPartial(result); return; }
     if (!hasAnything) {
       renderEmpty(result.rawInput, result.gen);
       return;
     }
 
+    renderPartial(result);
     var tripSheets = logicSheets.filter(function (s) { return s.categories.indexOf('trip') !== -1 || s.categories.indexOf('interlock') !== -1; });
 
     // ① 요약 카드
@@ -1347,7 +1348,7 @@
 
     // ② P&ID 도면번호
     if (drawings.length) {
-      var pidItems = drawings.slice(0, 6).map(function (d) {
+      var pidItems = drawings.map(function (d) {
         var copyBtn = el('button', { class: 'pid-copy', type: 'button' }, ['복사']);
         copyBtn.addEventListener('click', function () {
           copyToClipboard(d.dwg_no);
@@ -1369,9 +1370,17 @@
         ]);
       });
       var pidSection = el('div', {}, [
-        el('div', { class: 'section-title', text: 'P&ID 도면 · 업무 PC 검색용 DWG No.' }),
+        el('div', { class: 'section-title', text: 'P&ID 도면 · 전체 ' + drawings.length + '건' }),
         el('div', { class: 'card pid-block' }, pidItems)
       ]);
+      if (pidItems.length > 6) {
+        pidItems.slice(6).forEach(function (item) { item.hidden = true; });
+        var moreDrawings = el('button', { class: 'retry-btn', type: 'button', text: '나머지 ' + (pidItems.length - 6) + '건 더 보기', onclick: function () {
+          pidItems.forEach(function (item) { item.hidden = false; });
+          moreDrawings.hidden = true;
+        } });
+        pidSection.appendChild(moreDrawings);
+      }
       results.appendChild(pidSection);
     }
 
@@ -1408,6 +1417,7 @@
           el('div', { class: 'logic-body' }, [
             el('div', { class: 'logic-title', text: s.title || '(제목 없음)' }),
             metaRow,
+            logicPageUrl(s) ? el('a', { class: 'pid-open', href: logicPageUrl(s), target: '_blank', rel: 'noopener', text: '원본 p.' + s.pdf_page + ' 열기' }) : null,
             s.pdf_page != null ? el('div', { class: 'logic-page', text: '도면집 p.' + s.pdf_page + ' · ' + s.logic_book }) : el('div', { class: 'logic-page', text: s.logic_book })
           ])
         ]);
@@ -1571,7 +1581,7 @@
   var currentToken = 0;
   function doSearch(tag) {
     tag = (tag || '').trim();
-    if (!tag) { renderIntro(); return; }
+    if (!tag) { ++currentToken; searchBtn.disabled = false; renderIntro(); return; }
     var token = ++currentToken;
     searchBtn.disabled = true;
     renderLoading(tag);
