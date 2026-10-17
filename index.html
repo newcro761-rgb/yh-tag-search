@@ -1468,11 +1468,20 @@
 
     // ⑥ 관련 도면 (접힘)
     var relGroups = Object.keys(relatedDrawings);
+    var relHasFile = false;
     if (relGroups.length) {
       var relBody = relGroups.map(function (groupName) {
         var items = relatedDrawings[groupName].map(function (d) {
+          // 묶음 PDF(ILWD 합본 등)면 pdf_page로 해당 쪽을 바로 연다
+          var relUrl = drawingUrl(d.file_path);
+          if (relUrl && d.pdf_page) relUrl += '#page=' + d.pdf_page;
+          if (relUrl) relHasFile = true;
           return el('div', { class: 'related-item' }, [
-            el('div', { class: 'related-dwg', text: cleanStr(d.kosep_id || d.dwg_no) }),
+            el('div', { class: 'pid-number-row' }, [
+              el('div', { class: 'related-dwg', text: cleanStr(d.kosep_id || d.dwg_no) }),
+              relUrl ? el('a', { class: 'pid-open', href: relUrl, target: '_blank', rel: 'noopener',
+                text: d.pdf_page ? '열기 (합본 p.' + d.pdf_page + ')' : '열기' }) : null
+            ]),
             el('div', { class: 'related-title', text: cleanStr(d.title) })
           ]);
         });
@@ -1481,7 +1490,8 @@
           el('div', {}, items)
         ]);
       });
-      var relDetails = el('details', { class: 'card' }, [
+      // 열 수 있는 도면이 있으면 펼친 상태로 보여 준다
+      var relDetails = el('details', relHasFile ? { class: 'card', open: '' } : { class: 'card' }, [
         el('summary', {}, [
           el('span', { text: '관련 도면' }),
           el('span', { class: 'count', text: relGroups.length + '종' })
