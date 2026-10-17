@@ -1313,13 +1313,15 @@
     clear(results);
     var lookup = result.lookup;
     var instruments = (lookup && lookup.field_instruments) || [];
+    var setpoints = (lookup && lookup.setpoints) || [];
+    var provenance = (lookup && lookup.instrument_provenance) || [];
     var manualMentions = (lookup && lookup.manual_mentions) || [];
     var relatedDrawings = (lookup && lookup.related_drawings) || {};
     var logicSheets = result.logicSheets;
     var drawings = result.drawings;
     var manualSearch = result.manualSearch || [];
 
-    var hasAnything = instruments.length || logicSheets.length || drawings.length ||
+    var hasAnything = instruments.length || setpoints.length || logicSheets.length || drawings.length ||
       manualMentions.length || manualSearch.length || Object.keys(relatedDrawings).length;
 
     if (!hasAnything && (result.failures || []).length) { renderPartial(result); return; }
@@ -1429,8 +1431,18 @@
       results.appendChild(logicSection);
     }
 
-    // ⑤ 현장계기 정보
-    if (instruments.length) {
+    // ⑤ 현장계기 정보 — 값마다 어느 문서에서 왔는지 같이 보여 준다
+    function docLink(filePath, page, label) {
+      var u = drawingUrl(filePath);
+      if (!u) return label;
+      return el('a', { href: u + (page ? '#page=' + page : ''), target: '_blank', rel: 'noopener', text: label });
+    }
+    var SOURCE_LABEL = {
+      'BOP-INDEX': '★BOP 계기 엑셀',
+      'TG-462-001': '준공 계기 리스트 L-30000-LJ-462-001',
+      'WT-LIST': '수처리 계기 엑셀 (원본 파일 위치 미확인)'
+    };
+    if (instruments.length || setpoints.length) {
       var instBlocks = instruments.map(function (fi, idx) {
         var rows = [];
         function row(label, val) {
@@ -1440,6 +1452,9 @@
             el('dt', { text: label }),
             el('dd', { text: val })
           ]));
+        }
+        function rowEl(label, children) {
+          rows.push(el('div', { class: 'kv-row' }, [el('dt', { text: label }), el('dd', {}, children)]));
         }
         row('제조사', fi.maker);
         row('모델', fi.model_no);
@@ -1454,10 +1469,37 @@
           row('제작사(OEM) 설치도면', vdr.kosep_id + (vdr.title ? ' — ' + cleanStr(vdr.title) : '') +
             (vdr.file_path ? ' [열람 가능]' : ' [목록만 확인됨, 실물 미변환]'));
         }
+        var srcLabel = SOURCE_LABEL[fi.source_doc] || cleanStr(fi.source_doc);
+        var pv = fi.source_doc === 'BOP-INDEX' ? provenance[0] : null;
+        if (pv && pv.status === 'matches') {
+          rowEl('출처', [srcLabel + ' · 공식 인덱스 ', docLink(pv.file_path, pv.pdf_page, pv.doc_no + (pv.pdf_page ? ' p.' + pv.pdf_page : '')), '와 일치']);
+        } else if (pv && pv.status === 'differs') {
+          rowEl('출처', [srcLabel + ' · 공식 인덱스 ', docLink(pv.file_path, pv.pdf_page, pv.doc_no + (pv.pdf_page ? ' p.' + pv.pdf_page : '')), '와 다름 — ' + cleanStr(pv.diff_note)]);
+        } else if (pv && pv.status === 'not_in_official') {
+          row('출처', srcLabel + ' · 공식 인덱스(' + pv.doc_no + ')에 없는 태그');
+        } else if (srcLabel) {
+          row('출처', srcLabel);
+        }
         return el('div', { class: 'instrument-block' }, [
           instruments.length > 1 ? el('div', { class: 'instrument-heading', text: (idx + 1) + '. ' + cleanStr(fi.raw_tag || fi.instr_type) }) : null,
           el('dl', { class: 'kv-list' }, rows)
         ]);
+      });
+      // 공식 세팅치 리스트(문서번호·리비전·원본 쪽)
+      setpoints.forEach(function (sp) {
+        var rows = [];
+        function add(label, children) {
+          rows.push(el('div', { class: 'kv-row' }, [el('dt', { text: label }), el('dd', {}, children)]));
+        }
+        if (cleanStr(sp.set_point)) add('세팅치', [cleanStr(sp.set_point) + (sp.unit ? ' ' + cleanStr(sp.unit) : '')]);
+        if (cleanStr(sp.cal_range)) add('교정 레인지', [cleanStr(sp.cal_range)]);
+        if (cleanStr(sp.loop_sheet)) add('기능루프도', [cleanStr(sp.loop_sheet)]);
+        add('출처', [docLink(sp.file_path, sp.pdf_page, sp.doc_no + ' Rev ' + sp.doc_rev + (sp.pdf_page ? ' p.' + sp.pdf_page : ''))]);
+        if (sp.needs_check) add('주의', ['표에서 줄바꿈된 칸을 이어 붙인 값 — 원본 쪽에서 확인하세요']);
+        instBlocks.push(el('div', { class: 'instrument-block' }, [
+          el('div', { class: 'instrument-heading', text: '공식 세팅치 · ' + cleanStr(sp.raw_tag) + (sp.service_desc ? ' — ' + cleanStr(sp.service_desc) : '') }),
+          el('dl', { class: 'kv-list' }, rows)
+        ]));
       });
       var instSection = el('div', {}, [
         el('div', { class: 'section-title', text: '현장계기 정보' }),

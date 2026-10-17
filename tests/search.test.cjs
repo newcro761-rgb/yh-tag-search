@@ -59,3 +59,21 @@ test('usage-only sheets receive exact MAIN/FGD PDF page links',()=>{
  const {api}=app();const r=api.finalize('X',{variants:[]},{...emptyLookup,usages:[{logic_book:'FGD',drop_no:1,sheet_no:'2',pdf_page:345,title:'TEST'}]},[],[],{results:[]});
  assert.equal(r.logicSheets[0].pdf_page,345);assert.match(api.logicPageUrl(r.logicSheets[0]),/LOGIC_FGD_20240319.pdf#page=345$/);assert.equal(api.logicPageUrl({logic_book:'OTHER',pdf_page:1}),null);assert.equal(api.logicPageUrl({logic_book:'MAIN',pdf_page:null}),null);
 });
+test('setpoints, provenance and bundled drawing pages render with source links',()=>{
+ const {api,nodes}=app();
+ const lookup={...emptyLookup,
+  field_instruments:[{raw_tag:'CR-FT01A',source_doc:'BOP-INDEX',maker:'AUTROL',signal_range:'0~450'}],
+  instrument_provenance:[{doc_no:'L-59000-OJ-230-009',file_path:'001 계측제어/IL.pdf',pdf_page:4,status:'differs',diff_note:'레인지: 공식 0~150 / 엑셀 0~450'}],
+  setpoints:[{raw_tag:'CR-FT-01A/01B',set_point:'H:130, HH: 140',unit:'T/H',cal_range:'0~190',doc_no:'L-50000-UJ-483-001',doc_rev:'E',file_path:'001 계측제어/SP.pdf',pdf_page:3,needs_check:true}],
+  related_drawings:{'157 계장루프배선도':[{kosep_id:'L-56000-UJ-157-002',title:'ILWD',file_path:'001 계측제어/ILWD.pdf',pdf_page:11}]}};
+ api.renderResults({rawInput:'CR-FT01A',lookup,logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ const all=Object.values(nodes).flatMap(tree);
+ const text=all.map(n=>n.text||'').join('|');
+ assert.match(text,/공식 0~150/);
+ assert.match(text,/H:130, HH: 140 T\/H/);
+ assert.match(text,/원본 쪽에서 확인/);
+ const hrefs=all.map(n=>n.attrs.href).filter(Boolean);
+ assert.ok(hrefs.some(h=>h.endsWith('/SP.pdf#page=3')));
+ assert.ok(hrefs.some(h=>h.endsWith('/IL.pdf#page=4')));
+ assert.ok(hrefs.some(h=>h.endsWith('/ILWD.pdf#page=11')));
+});
