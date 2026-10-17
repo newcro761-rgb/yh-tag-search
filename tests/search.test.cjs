@@ -77,3 +77,16 @@ test('setpoints, provenance and bundled drawing pages render with source links',
  assert.ok(hrefs.some(h=>h.endsWith('/IL.pdf#page=4')));
  assert.ok(hrefs.some(h=>h.endsWith('/ILWD.pdf#page=11')));
 });
+test('server sheet index replaces per-variant search_logic scans',async()=>{
+ const {api}=app();const calls=[];
+ api.setTool((name,args)=>{calls.push(name);
+  if(name==='lookup_tag') return Promise.resolve({...emptyLookup,body_mentions:[{logic_book:'MAIN',drop_no:21,sheet_no:'2',title:'MS',pdf_page:2354}]});
+  return Promise.resolve({results:[]});});
+ const r=await api.runSearch('MS-FT01B');
+ assert.ok(!calls.includes('search_logic'));
+ assert.equal(r.logicSheets.length,1);assert.equal(r.logicSheets[0].pdf_page,2354);
+ const {api:old}=app();const oldCalls=[];
+ old.setTool((name)=>{oldCalls.push(name);return Promise.resolve(name==='lookup_tag'?{...emptyLookup}:{results:[]});});
+ await old.runSearch('MS-FT01B');
+ assert.ok(oldCalls.includes('search_logic'));
+});

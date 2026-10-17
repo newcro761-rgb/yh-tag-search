@@ -946,44 +946,42 @@
       .then(function (data) { logCall('search_manual(' + rawInput.trim() + ') -> ' + ((data.results || []).length) + '건'); return data; })
       .catch(function (err) { logCall('search_manual FAIL: ' + err.message); return null; });
 
-    var searchPromises = gen.variants.map(function (v) {
-      return callTool('search_logic', { query: v, logic_book: primaryBook })
-        .then(function (data) {
-          logCall('search_logic(' + v + ', ' + primaryBook + ') -> ' + ((data.results || []).length) + '건');
-          return { variant: v, book: primaryBook, data: data };
-        })
-        .catch(function (err) {
-          logCall('search_logic(' + v + ', ' + primaryBook + ') FAIL: ' + err.message);
-          return { variant: v, book: primaryBook, data: null, error: err };
-        });
-    });
+    function searchLogicVariants(book, fallback) {
+      return Promise.all(gen.variants.map(function (v) {
+        var label = 'search_logic(' + v + ', ' + book + (fallback ? ', fallback' : '') + ')';
+        return callTool('search_logic', { query: v, logic_book: book })
+          .then(function (data) {
+            logCall(label + ' -> ' + ((data.results || []).length) + '건');
+            return { variant: v, book: book, data: data };
+          })
+          .catch(function (err) {
+            logCall(label + ' FAIL: ' + err.message);
+            return { variant: v, book: book, data: null, error: err };
+          });
+      }));
+    }
 
-    return Promise.all([lookupPromise, Promise.all(searchPromises), manualSearchPromise]).then(function (res) {
+    // 서버가 태그→시트 색인(body_mentions)을 주면 그걸 쓴다. search_logic은 시트 본문 전수
+    // 스캔이라 변형마다 호출하면 D1 무료 읽기 한도를 빠르게 소진한다 — 색인이 없을 때만 폴백.
+    return Promise.all([lookupPromise, manualSearchPromise]).then(function (res) {
       var lookupData = res[0];
-      var searchResults = res[1];
-      var manualData = res[2];
-
-      var anyLogicHit = searchResults.some(function (r) { return r.data && (r.data.results || []).length > 0; });
-      var lookupHasUsages = lookupData && lookupData.usages_total > 0;
-
-      if (!anyLogicHit && !lookupHasUsages && primaryBook === 'MAIN') {
-        // 2단계 확대: FGD로 재시도
-        var fallbackPromises = gen.variants.map(function (v) {
-          return callTool('search_logic', { query: v, logic_book: 'FGD' })
-            .then(function (data) {
-              logCall('search_logic(' + v + ', FGD, fallback) -> ' + ((data.results || []).length) + '건');
-              return { variant: v, book: 'FGD', data: data };
-            })
-            .catch(function (err) {
-              logCall('search_logic(' + v + ', FGD, fallback) FAIL: ' + err.message);
-              return { variant: v, book: 'FGD', data: null, error: err };
-            });
-        });
-        return Promise.all(fallbackPromises).then(function (fbResults) {
-          return finalize(rawInput, gen, lookupData, searchResults.concat(fbResults), callLog, manualData);
-        });
+      var manualData = res[1];
+      if (lookupData && Array.isArray(lookupData.body_mentions)) {
+        logCall('tag_sheet_index -> ' + lookupData.body_mentions.length + '건');
+        var indexed = [{ variant: gen.forLookup, book: 'INDEX', data: { results: lookupData.body_mentions } }];
+        return finalize(rawInput, gen, lookupData, indexed, callLog, manualData);
       }
-      return finalize(rawInput, gen, lookupData, searchResults, callLog, manualData);
+      return searchLogicVariants(primaryBook, false).then(function (searchResults) {
+        var anyLogicHit = searchResults.some(function (r) { return r.data && (r.data.results || []).length > 0; });
+        var lookupHasUsages = lookupData && lookupData.usages_total > 0;
+        if (!anyLogicHit && !lookupHasUsages && primaryBook === 'MAIN') {
+          // 2단계 확대: FGD로 재시도
+          return searchLogicVariants('FGD', true).then(function (fbResults) {
+            return finalize(rawInput, gen, lookupData, searchResults.concat(fbResults), callLog, manualData);
+          });
+        }
+        return finalize(rawInput, gen, lookupData, searchResults, callLog, manualData);
+      });
     });
   }
 
