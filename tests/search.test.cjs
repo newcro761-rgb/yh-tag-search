@@ -179,3 +179,15 @@ test('tag_auto.ai_note shows AI draft with confidence and uncertain; hidden when
  r.api.renderResults({rawInput:'X',lookup:{...emptyLookup,tag_note:{note:'검토본',sources:[]},tag_auto:ta},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
  assert.doesNotMatch(r.nodes.results.textContent,/AI 설명/);
 });
+
+test('ai_note.summary shown first, full note folded under 자세히',()=>{
+ const ta={entry_sheets:[],used_by:[],used_by_total:0,trip_paths:[],trip_path_basis:[],trip_level:null,redundancy:[],method:'auto_v1',
+  ai_note:{summary:'요약1\n⚠ 요약2',note:'긴 설명',sources:[],confidence:'high',uncertain:'없음 아님'}};
+ const {api,nodes}=app();
+ api.renderResults({rawInput:'X',lookup:{...emptyLookup,tag_auto:ta},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ const sum=tree(nodes.results).find(n=>(n.className||'').includes('ai-note-summary'));
+ assert.equal(sum.text,'요약1\n⚠ 요약2');
+ const det=tree(nodes.results).find(n=>n.className==='ai-note-more');
+ assert.ok(det, 'details 접힘 영역');
+ assert.match(det.textContent,/자세히/);assert.match(det.textContent,/긴 설명/);
+});
