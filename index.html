@@ -441,6 +441,14 @@
   details > .details-body { padding: 0 16px 16px; }
   details > .details-body.no-pad-top { padding-top: 0; }
 
+  .stage-pill { display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.5; padding: 0 7px; margin-left: 6px; border-radius: 999px; background: var(--accent-soft-bg); color: var(--accent-soft-fg); font-family: var(--font-ui); vertical-align: middle; }
+  .tag-note-text { white-space: pre-wrap; margin: 6px 0 0; font-size: 14px; line-height: 1.6; }
+  .tag-note-src { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--fg-muted); }
+  .tag-note-review, .conflict-note { font-size: 12px; color: var(--fg-faint); margin: 6px 0 0; }
+  .conflict-attr { font-weight: 700; font-size: 13px; margin: 10px 0 4px; }
+  .conflict-val { font-size: 13px; padding: 4px 0; border-top: 1px solid var(--border); }
+  .conflict-val-v { font-family: var(--font-mono); font-weight: 600; }
+  .conflict-val-src { color: var(--fg-muted); }
   .dwg-alias { font-size: 11.5px; color: var(--fg-faint); font-weight: 400; font-family: var(--font-ui); }
   details.dwg-guide { margin-top: 8px; font-size: 12.5px; color: var(--fg-muted); }
   details.dwg-guide > summary { padding: 8px 4px; font-size: 12px; text-transform: none; letter-spacing: normal; font-weight: 600; justify-content: flex-start; }
@@ -1118,13 +1126,13 @@
     var byNo = {};
     var order = [];
     function keyOf(no) { return cleanStr(no).replace(/\s+/g, '').toUpperCase(); }
-    function upsert(no, title, tier, filePath, pdfPage, alias) {
+    function upsert(no, title, tier, filePath, pdfPage, alias, docMeta) {
       no = cleanStr(no);
       if (!no) return;
       var k = keyOf(no);
       var rec = byNo[k];
       if (!rec) {
-        rec = { dwg_no: no, title: cleanStr(title), tier: tier, file_path: filePath || null, pdf_page: pdfPage || null };
+        rec = { dwg_no: no, title: cleanStr(title), tier: tier, file_path: filePath || null, pdf_page: pdfPage || null, doc_meta: docMeta || null };
         byNo[k] = rec;
         order.push(k);
       } else {
@@ -1133,13 +1141,15 @@
         // 같은 도면번호가 여러 티어에서 들어올 수 있다. 실물 경로는 먼저 발견된 것을 유지.
         if (!rec.file_path && filePath) { rec.file_path = filePath; rec.pdf_page = pdfPage || null; }
       }
+      // doc_meta(stage 등)는 먼저 발견된 비어있지 않은 값을 유지
+      if (rec.doc_meta == null && docMeta) rec.doc_meta = docMeta;
       // 공급사 번호로 적힌 같은 도면: KOSEP 번호 하나로 합치고 원래 번호는 별칭으로 남긴다
       if (alias && alias !== no) {
         rec.aliases = rec.aliases || [];
         if (rec.aliases.indexOf(alias) < 0) rec.aliases.push(alias);
       }
     }
-    (lookupData.pinned_drawings || []).forEach(function (d) { upsert(d.dwg_no, d.title, 0, d.file_path, d.pdf_page); });
+    (lookupData.pinned_drawings || []).forEach(function (d) { upsert(d.dwg_no, d.title, 0, d.file_path, d.pdf_page, null, d.doc_meta); });
     (lookupData.field_instruments || []).forEach(function (fi) {
       if (!fi.pid_dwg_no) return;
       var pr = fi.pid_dwg_resolved;
@@ -1151,7 +1161,7 @@
         upsert(fi.vendor_dwg_resolved.kosep_id, fi.vendor_dwg_resolved.title, 1.5, fi.vendor_dwg_resolved.file_path, fi.vendor_dwg_resolved.pdf_page);
       }
     });
-    (lookupData.candidate_drawings || []).forEach(function (d) { upsert(d.dwg_no || d.kosep_id, d.title, 2, d.file_path, d.pdf_page); });
+    (lookupData.candidate_drawings || []).forEach(function (d) { upsert(d.dwg_no || d.kosep_id, d.title, 2, d.file_path, d.pdf_page, null, d.doc_meta); });
     return order.map(function (k) { return byNo[k]; });
   }
 
@@ -1187,6 +1197,65 @@
         el('h4', {}, ['공급사 번호 — 예: ', el('code', { text: '310PB52-576' }), '(히타치), ', el('code', { text: 'TEQ-…' }), ', ', el('code', { text: 'GSE-…' })]),
         el('p', { text: '공급사가 자기 회사에서 매긴 번호. 같은 도면에 발전소 번호가 따로 붙어 있고, 이 사이트는 두 번호를 짝지어 발전소 번호로 보여줌. 히타치 계기리스트에는 히타치 번호가 적혀 있어서 검색 결과에 섞여 나올 수 있음.' }),
         el('p', { class: 'dwg-guide-note', text: '※ 2·3번째 자리 뜻은 도면 목록에서 읽어낸 것이라 일부 추정. 4번째(도면 종류)는 확실.' })
+      ])
+    ]);
+  }
+
+  var STAGE_LABEL = { asbuilt: '준공', construction: '시공용', design: '설계', edited: '편집본', as_installed: '현재설치본', oh_cal: 'OH·교정' };
+  function stageBadge(meta) {
+    var label = meta && STAGE_LABEL[meta.stage];
+    return label ? el('span', { class: 'stage-pill', text: label }) : null;
+  }
+
+  var CONFLICT_ATTR_LABEL = { range: '레인지', service_desc: '설명', set_H: '설정 H', set_HH: '설정 HH', set_L: '설정 L', set_LL: '설정 LL' };
+  var CONFLICT_SOURCE_LABEL = { instruments: '계기 엑셀(BOP-INDEX 등)', instrument_provenance: '공식 계기리스트', instrument_setpoints: '세팅치 리스트', sheets_logic_range: 'DCS 로직 시트' };
+
+  // 문서마다 값이 다른 항목 — 자동으로 하나를 고르지 않고 출처와 함께 나열만 한다
+  function buildConflicts(conflicts) {
+    var blocks = conflicts.map(function (c) {
+      var vals = (Array.isArray(c.values) ? c.values : []).map(function (v) {
+        var src = CONFLICT_SOURCE_LABEL[v.source] || cleanStr(v.source);
+        var docNo = cleanStr(v.doc_no);
+        var srcText;
+        if (docNo) {
+          srcText = docNo + (cleanStr(v.doc_rev) ? ' Rev ' + cleanStr(v.doc_rev) : '') + (v.pdf_page ? ' p.' + v.pdf_page : '');
+        } else {
+          srcText = src + (v.source === 'sheets_logic_range' && v.pdf_page ? ' p.' + v.pdf_page : '');
+        }
+        var stage = STAGE_LABEL[v.stage];
+        return el('div', { class: 'conflict-val' }, [
+          el('span', { class: 'conflict-val-v', text: cleanStr(v.value) + (cleanStr(v.unit) ? ' ' + cleanStr(v.unit) : '') }),
+          el('span', { class: 'conflict-val-src', text: '  ' + srcText }),
+          stage ? el('span', { class: 'stage-pill', text: stage }) : null
+        ]);
+      });
+      return el('div', { class: 'conflict' }, [
+        el('div', { class: 'conflict-attr', text: CONFLICT_ATTR_LABEL[c.attr] || cleanStr(c.attr) }),
+        c.kind === 'logic_scale' ? el('div', { class: 'conflict-note', text: 'DCS 로직 스케일(공학단위) 차이일 수 있음 — 문서 간 불일치와 다를 수 있습니다' }) : null,
+        el('div', {}, vals)
+      ]);
+    });
+    return el('div', {}, [
+      el('div', { class: 'section-title', text: '문서마다 값이 다름' }),
+      el('div', { class: 'card card-pad' }, [
+        el('p', { class: 'conflict-note', text: '어느 값이 맞는지 자동으로 고르지 않습니다. 교정성적서 등 현장 근거로 확인하세요.' })
+      ].concat(blocks))
+    ]);
+  }
+
+  // 검토된 설비 설명 — 사람이 승인한 내용만 서버가 내려 준다
+  function buildTagNote(tn) {
+    var srcs = (Array.isArray(tn.sources) ? tn.sources : []).map(function (s) {
+      var kind = { logic_sheet: '로직 시트', manual: '해설서', drawing: '도면' }[s.kind] || cleanStr(s.kind);
+      return el('li', { text: kind + ' ' + cleanStr(s.ref) + (s.page ? ' p.' + s.page : '') });
+    });
+    var rev = [cleanStr(tn.reviewed_by), cleanStr(tn.reviewed_at)].filter(Boolean).join(' ');
+    return el('div', {}, [
+      el('div', { class: 'section-title', text: '설비 설명 (검토됨)' }),
+      el('div', { class: 'card card-pad' }, [
+        el('p', { class: 'tag-note-text', text: String(tn.note) }),
+        srcs.length ? el('ul', { class: 'tag-note-src' }, srcs) : null,
+        rev ? el('p', { class: 'tag-note-review', text: '검토: ' + rev }) : null
       ])
     ]);
   }
@@ -1373,12 +1442,15 @@
     var provenance = (lookup && lookup.instrument_provenance) || [];
     var manualMentions = (lookup && lookup.manual_mentions) || [];
     var relatedDrawings = (lookup && lookup.related_drawings) || {};
+    var tagNote = lookup && lookup.tag_note && cleanStr(lookup.tag_note.note) ? lookup.tag_note : null;
+    var valueConflicts = (lookup && Array.isArray(lookup.value_conflicts)) ? lookup.value_conflicts : [];
     var logicSheets = result.logicSheets;
     var drawings = result.drawings;
     var manualSearch = result.manualSearch || [];
 
     var hasAnything = instruments.length || setpoints.length || logicSheets.length || drawings.length ||
-      manualMentions.length || manualSearch.length || Object.keys(relatedDrawings).length;
+      manualMentions.length || manualSearch.length || Object.keys(relatedDrawings).length ||
+      tagNote || valueConflicts.length;
 
     if (!hasAnything && (result.failures || []).length) { renderPartial(result); return; }
     if (!hasAnything) {
@@ -1403,6 +1475,7 @@
       summaryBadges.length ? el('div', { class: 'summary-badges' }, summaryBadges) : null
     ]);
     results.appendChild(summaryCard);
+    if (tagNote) results.appendChild(buildTagNote(tagNote));
 
     // ② P&ID 도면번호
     if (drawings.length) {
@@ -1423,7 +1496,7 @@
           : null;
         return el('div', { class: 'pid-item' }, [
           el('div', { class: 'pid-number-row' }, [
-            el('div', { class: 'pid-number' }, [d.dwg_no, aliasNote]),
+            el('div', { class: 'pid-number' }, [d.dwg_no, aliasNote, stageBadge(d.doc_meta)]),
             openUrl ? el('a', { class: 'pid-open', href: openUrl, target: '_blank', rel: 'noopener' }, ['열기']) : null,
             copyBtn
           ]),
@@ -1580,6 +1653,7 @@
       ]);
       results.appendChild(instSection);
     }
+    if (valueConflicts.length) results.appendChild(buildConflicts(valueConflicts));
 
     // ⑥ 관련 도면 (접힘)
     var relGroups = Object.keys(relatedDrawings);
@@ -1593,7 +1667,7 @@
           if (relUrl) relHasFile = true;
           return el('div', { class: 'related-item' }, [
             el('div', { class: 'pid-number-row' }, [
-              el('div', { class: 'related-dwg', text: cleanStr(d.kosep_id || d.dwg_no) }),
+              el('div', { class: 'related-dwg' }, [cleanStr(d.kosep_id || d.dwg_no), stageBadge(d.doc_meta)]),
               relUrl ? el('a', { class: 'pid-open', href: relUrl, target: '_blank', rel: 'noopener',
                 text: d.pdf_page ? '열기 (합본 p.' + d.pdf_page + ')' : '열기' }) : null
             ]),

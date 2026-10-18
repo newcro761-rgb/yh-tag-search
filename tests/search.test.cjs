@@ -102,3 +102,48 @@ test('supplier pid_dwg_no merges into the KOSEP drawing once with an alias; unre
  assert.match(nodes.results.textContent,/\(= 히타치 번호 310PB52-576\)/);
  assert.match(nodes.results.textContent,/도면번호 읽는 법/);
 });
+test('value_conflicts render per-source values with stage labels and the no-auto-pick notice',()=>{
+ const {api,nodes}=app();
+ const lookup={...emptyLookup,value_conflicts:[
+  {attr:'range',kind:'docs',values:[{value:'0~150',unit:'T/H',doc_no:'L-59000-OJ-230-009',doc_rev:'B',pdf_page:4,source:'instrument_provenance',stage:'asbuilt'},{value:'0~450',unit:'T/H',doc_no:null,source:'instruments',stage:'unknown'}]},
+  {attr:'set_HH',kind:'logic_scale',values:[{value:'140',unit:null,doc_no:null,pdf_page:77,source:'sheets_logic_range'}]}]};
+ api.renderResults({rawInput:'X',lookup,logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ const t=nodes.results.textContent;
+ assert.match(t,/문서마다 값이 다름/);
+ assert.match(t,/자동으로 고르지 않습니다/);
+ assert.match(t,/레인지/);assert.match(t,/설정 HH/);
+ assert.match(t,/0~150 T\/H\s+L-59000-OJ-230-009 Rev B p\.4/);
+ assert.match(t,/준공/);
+ assert.match(t,/계기 엑셀\(BOP-INDEX 등\)/);
+ assert.match(t,/DCS 로직 시트 p\.77/);
+ assert.match(t,/DCS 로직 스케일/);
+ const none=app();
+ none.api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'A'}],value_conflicts:[]},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ assert.doesNotMatch(none.nodes.results.textContent,/문서마다 값이 다름/);
+});
+test('stage badges appear on drawings (doc_meta kept through merge) and related drawings; unknown shows none',()=>{
+ const {api,nodes}=app();
+ const lookup={...emptyLookup,
+  pinned_drawings:[{dwg_no:'A-1',title:'t',file_path:'a.pdf',doc_meta:{stage:'as_installed',scope:null,rev:'1'}},{dwg_no:'B-2',title:'u',file_path:'b.pdf',doc_meta:{stage:'unknown'}}],
+  candidate_drawings:[{dwg_no:'A-1',title:'t',doc_meta:{stage:'design'}}],
+  related_drawings:{'157':[{kosep_id:'R-1',title:'r',file_path:'r.pdf',doc_meta:{stage:'oh_cal'}}]}};
+ const r=api.finalize('X',{variants:[]},lookup,[],[],{results:[]});
+ assert.equal(r.drawings.find(d=>d.dwg_no==='A-1').doc_meta.stage,'as_installed');
+ api.renderResults(r);
+ const pills=Object.values(nodes).flatMap(tree).filter(n=>n.className==='stage-pill').map(n=>n.text);
+ assert.deepEqual(pills.sort(),['OH·교정','현재설치본'].sort());
+});
+test('tag_note renders at the top with preserved line breaks, sources and reviewer',()=>{
+ const {api,nodes}=app();
+ const lookup={...emptyLookup,field_instruments:[{raw_tag:'A'}],tag_note:{note:'줄1\n줄2',sources:[{kind:'logic_sheet',ref:'25-302'},{kind:'manual',ref:'해설서',page:207}],reviewed_by:'홍길동',reviewed_at:'2026-10-01'}};
+ api.renderResults({rawInput:'X',lookup,logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ const kids=nodes.results.children;
+ assert.match(kids[1].textContent,/설비 설명 \(검토됨\)/);
+ const note=tree(nodes.results).find(n=>n.className==='tag-note-text');
+ assert.equal(note.text,'줄1\n줄2');
+ const t=nodes.results.textContent;
+ assert.match(t,/로직 시트 25-302/);assert.match(t,/해설서 해설서 p\.207/);assert.match(t,/검토: 홍길동 2026-10-01/);
+ const no=app();
+ no.api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'A'}]},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ assert.doesNotMatch(no.nodes.results.textContent,/설비 설명/);
+});
