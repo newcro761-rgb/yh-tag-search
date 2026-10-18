@@ -147,3 +147,23 @@ test('tag_note renders at the top with preserved line breaks, sources and review
  no.api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'A'}]},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
  assert.doesNotMatch(no.nodes.results.textContent,/설비 설명/);
 });
+
+test('tag_auto renders section with redundancy, sheets, used_by overflow, trip box and basis; lookup with only tag_auto counts',()=>{
+ const {api,nodes}=app();
+ const ta={entry_sheets:[{ref:'25-302',title:'ANALOG INPUT'}],used_by:[{ref:'1-197',title:'APC'}],used_by_total:9,trip_paths:[['25-302 A','23-424 B','23-407 C'],['x','y']],trip_path_basis:['estimated','confirmed'],trip_level:'indirect',redundancy:['2of3','median'],method:'auto_v1',built_at:'2026-10-01'};
+ api.renderResults({rawInput:'X',lookup:{...emptyLookup,tag_auto:ta},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ const t=nodes.results.textContent;
+ assert.match(t,/자동 추출 \(검토 전\)/);assert.match(t,/다중화: 3개 중 2개 판정, 중간값 선택/);
+ assert.match(t,/쓰이는 시트: 25-302 ANALOG INPUT/);assert.match(t,/신호가 가는 곳 \(9곳\)/);assert.match(t,/외 8곳/);
+ assert.match(t,/간접 연결됨 \(2단계\)/);assert.match(t,/25-302 A → 23-424 B → 23-407 C/);
+ assert.match(t,/방향 추정/);assert.match(t,/방향 확정/);assert.match(t,/시트 단위 연결입니다/);
+ const d=app();
+ d.api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'A'}],tag_auto:{...ta,trip_paths:[],trip_level:null}},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ assert.match(d.nodes.results.textContent,/찾지 못했습니다 \(2단계 이내\)/);
+ const direct=app();
+ direct.api.renderResults({rawInput:'X',lookup:{...emptyLookup,tag_auto:{...ta,trip_level:'direct'}},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ assert.match(direct.nodes.results.textContent,/직접 연결됨/);
+ const no=app();
+ no.api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'A'}]},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ assert.doesNotMatch(no.nodes.results.textContent,/자동 추출/);
+});
