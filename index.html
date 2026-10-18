@@ -441,6 +441,18 @@
   details > .details-body { padding: 0 16px 16px; }
   details > .details-body.no-pad-top { padding-top: 0; }
 
+  .dwg-alias { font-size: 11.5px; color: var(--fg-faint); font-weight: 400; font-family: var(--font-ui); }
+  details.dwg-guide { margin-top: 8px; font-size: 12.5px; color: var(--fg-muted); }
+  details.dwg-guide > summary { padding: 8px 4px; font-size: 12px; text-transform: none; letter-spacing: normal; font-weight: 600; justify-content: flex-start; }
+  details.dwg-guide .dwg-guide-body { padding: 0 4px 8px; }
+  details.dwg-guide h4 { margin: 10px 0 4px; font-size: 12.5px; color: var(--fg); }
+  details.dwg-guide p { margin: 4px 0; }
+  details.dwg-guide table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  details.dwg-guide th, details.dwg-guide td { border: 1px solid var(--border); padding: 4px 6px; text-align: left; vertical-align: top; }
+  details.dwg-guide td:nth-child(2) { font-family: var(--font-mono); white-space: nowrap; }
+  details.dwg-guide code { font-family: var(--font-mono); }
+  .dwg-guide-note { color: var(--fg-faint); font-size: 11.5px; }
+
   .related-group + .related-group { margin-top: 14px; }
   .related-group-title { font-size: 12.5px; font-weight: 700; color: var(--fg-muted); margin: 0 0 6px; }
   .related-item { font-size: 13px; padding: 6px 0; border-top: 1px solid var(--border); }
@@ -1106,31 +1118,77 @@
     var byNo = {};
     var order = [];
     function keyOf(no) { return cleanStr(no).replace(/\s+/g, '').toUpperCase(); }
-    function upsert(no, title, tier, filePath) {
+    function upsert(no, title, tier, filePath, pdfPage, alias) {
       no = cleanStr(no);
       if (!no) return;
       var k = keyOf(no);
       var rec = byNo[k];
       if (!rec) {
-        rec = { dwg_no: no, title: cleanStr(title), tier: tier, file_path: filePath || null };
+        rec = { dwg_no: no, title: cleanStr(title), tier: tier, file_path: filePath || null, pdf_page: pdfPage || null };
         byNo[k] = rec;
         order.push(k);
       } else {
         if (tier < rec.tier) { rec.tier = tier; if (title) rec.title = cleanStr(title); }
         if (!rec.title && title) rec.title = cleanStr(title);
         // 같은 도면번호가 여러 티어에서 들어올 수 있다. 실물 경로는 먼저 발견된 것을 유지.
-        if (!rec.file_path && filePath) rec.file_path = filePath;
+        if (!rec.file_path && filePath) { rec.file_path = filePath; rec.pdf_page = pdfPage || null; }
+      }
+      // 공급사 번호로 적힌 같은 도면: KOSEP 번호 하나로 합치고 원래 번호는 별칭으로 남긴다
+      if (alias && alias !== no) {
+        rec.aliases = rec.aliases || [];
+        if (rec.aliases.indexOf(alias) < 0) rec.aliases.push(alias);
       }
     }
-    (lookupData.pinned_drawings || []).forEach(function (d) { upsert(d.dwg_no, d.title, 0, d.file_path); });
-    (lookupData.field_instruments || []).forEach(function (fi) { if (fi.pid_dwg_no) upsert(fi.pid_dwg_no, fi.service_desc, 1); });
+    (lookupData.pinned_drawings || []).forEach(function (d) { upsert(d.dwg_no, d.title, 0, d.file_path, d.pdf_page); });
+    (lookupData.field_instruments || []).forEach(function (fi) {
+      if (!fi.pid_dwg_no) return;
+      var pr = fi.pid_dwg_resolved;
+      if (pr && pr.kosep_id) upsert(pr.kosep_id, pr.title || fi.service_desc, 1, pr.file_path, pr.pdf_page, fi.pid_dwg_no);
+      else upsert(fi.pid_dwg_no, fi.service_desc, 1);
+    });
     (lookupData.field_instruments || []).forEach(function (fi) {
       if (fi.vendor_dwg_resolved && fi.vendor_dwg_resolved.kosep_id) {
-        upsert(fi.vendor_dwg_resolved.kosep_id, fi.vendor_dwg_resolved.title, 1.5, fi.vendor_dwg_resolved.file_path);
+        upsert(fi.vendor_dwg_resolved.kosep_id, fi.vendor_dwg_resolved.title, 1.5, fi.vendor_dwg_resolved.file_path, fi.vendor_dwg_resolved.pdf_page);
       }
     });
-    (lookupData.candidate_drawings || []).forEach(function (d) { upsert(d.dwg_no || d.kosep_id, d.title, 2, d.file_path); });
+    (lookupData.candidate_drawings || []).forEach(function (d) { upsert(d.dwg_no || d.kosep_id, d.title, 2, d.file_path, d.pdf_page); });
     return order.map(function (k) { return byNo[k]; });
+  }
+
+  // 공급사 번호 표기: 히타치 패턴(310PB52-576)이면 회사명을, 아니면 일반 표기를 쓴다
+  function supplierLabel(no) { return /^\d{3}[A-Z]{2}\d{2}-\d{3}$/.test(no) ? '히타치 번호' : '공급사 번호'; }
+
+  // 도면번호 읽는 법 (정적 안내 — textContent 기반으로만 만든다)
+  function buildDwgGuide() {
+    var rows = [
+      ['1번째', 'L', '거의 전부 L (5,6호기 공용 문서). 5로 시작하는 9건은 5호기 전용으로 보임'],
+      ['2번째', '31300', '계통 번호. 예: 11600 주증기·재열, 15100 급수, 31300 터빈 증기, 31400 터빈 오일, 36130 복수, 36420 순환수, 36610 폐회로 냉각수, 56000 계장루프배선'],
+      ['3번째', 'LM', '설계 분야/공급사 묶음. UJ = BOP 계측(현대엔지니어링, 2,082건), LM = 터빈 기계(히타치), LJ = 터빈 계측(히타치), LE = 발전기·전기'],
+      ['4번째', '105', null],
+      ['5번째', '001', '일련번호(같은 종류의 몇 번째 장)']
+    ];
+    var tbody = el('tbody', {}, rows.map(function (r) {
+      return el('tr', {}, [
+        el('td', { text: r[0] }),
+        el('td', { text: r[1] }),
+        r[2] === null
+          ? el('td', {}, [el('strong', { text: '도면 종류' }), ' — 105 P&ID, 103 제어로직도, 157 계장루프배선도, 158 C&I, 159 계장위치도, 160 계장설치상세, 162 Functional Block, 163 Level Setting, 164 Operational Graphic, 167 임펄스배관, 168 Functional Loop, 174 외형도, 189 배관도'])
+          : el('td', { text: r[2] })
+      ]);
+    }));
+    return el('details', { class: 'dwg-guide' }, [
+      el('summary', { text: '도면번호 읽는 법' }),
+      el('div', { class: 'dwg-guide-body' }, [
+        el('h4', {}, ['발전소(남동발전) 번호 — 예: ', el('code', { text: 'L-31300-LM-105-001' })]),
+        el('table', {}, [
+          el('thead', {}, [el('tr', {}, [el('th', { text: '자리' }), el('th', { text: '예' }), el('th', { text: '뜻' })])]),
+          tbody
+        ]),
+        el('h4', {}, ['공급사 번호 — 예: ', el('code', { text: '310PB52-576' }), '(히타치), ', el('code', { text: 'TEQ-…' }), ', ', el('code', { text: 'GSE-…' })]),
+        el('p', { text: '공급사가 자기 회사에서 매긴 번호. 같은 도면에 발전소 번호가 따로 붙어 있고, 이 사이트는 두 번호를 짝지어 발전소 번호로 보여줌. 히타치 계기리스트에는 히타치 번호가 적혀 있어서 검색 결과에 섞여 나올 수 있음.' }),
+        el('p', { class: 'dwg-guide-note', text: '※ 2·3번째 자리 뜻은 도면 목록에서 읽어낸 것이라 일부 추정. 4번째(도면 종류)는 확실.' })
+      ])
+    ]);
   }
 
   var TIER_LABEL = { 0: '확정', 1: '계기대장 P&ID', 1.5: '제작사(OEM) 도면', 2: '계통 추정' };
@@ -1359,9 +1417,13 @@
         // 실물 파일이 없으면(file_path null) 링크를 만들지 않는다 — 번호만 맞고
         // 파일이 없는 경우가 많아(계장루프배선도 등) 깨진 링크가 되기 때문.
         var openUrl = drawingUrl(d.file_path);
+        if (openUrl && d.pdf_page) openUrl += '#page=' + d.pdf_page;
+        var aliasNote = (d.aliases && d.aliases.length)
+          ? el('span', { class: 'dwg-alias', text: ' (= ' + d.aliases.map(function (a) { return supplierLabel(a) + ' ' + a; }).join(', ') + ')' })
+          : null;
         return el('div', { class: 'pid-item' }, [
           el('div', { class: 'pid-number-row' }, [
-            el('div', { class: 'pid-number', text: d.dwg_no }),
+            el('div', { class: 'pid-number' }, [d.dwg_no, aliasNote]),
             openUrl ? el('a', { class: 'pid-open', href: openUrl, target: '_blank', rel: 'noopener' }, ['열기']) : null,
             copyBtn
           ]),
@@ -1381,6 +1443,7 @@
         } });
         pidSection.appendChild(moreDrawings);
       }
+      pidSection.appendChild(buildDwgGuide());
       results.appendChild(pidSection);
     }
 
@@ -1461,11 +1524,23 @@
         row('위치', fi.location);
         row('공급사', fi.supplier);
         row('비고', fi.remarks);
-        row('계기 배치도 번호(참고용)', fi.pid_dwg_no);
+        if (fi.pid_dwg_resolved && fi.pid_dwg_resolved.kosep_id && cleanStr(fi.pid_dwg_no) &&
+            fi.pid_dwg_resolved.kosep_id !== cleanStr(fi.pid_dwg_no)) {
+          row('계기 배치도 번호(참고용)', cleanStr(fi.pid_dwg_no) + ' → ' + fi.pid_dwg_resolved.kosep_id +
+            ' (같은 도면, ' + supplierLabel(cleanStr(fi.pid_dwg_no)) + ')');
+        } else {
+          row('계기 배치도 번호(참고용)', fi.pid_dwg_no);
+        }
         if (fi.vendor_dwg_resolved) {
           var vdr = fi.vendor_dwg_resolved;
-          row('제작사(OEM) 설치도면', vdr.kosep_id + (vdr.title ? ' — ' + cleanStr(vdr.title) : '') +
-            (vdr.file_path ? ' [열람 가능]' : ' [목록만 확인됨, 실물 미변환]'));
+          var vdrText = vdr.kosep_id + (vdr.title ? ' — ' + cleanStr(vdr.title) : '') + ' ';
+          var vdrUrl = drawingUrl(vdr.file_path);
+          if (vdrUrl) {
+            if (vdr.pdf_page) vdrUrl += '#page=' + vdr.pdf_page;
+            rowEl('제작사(OEM) 설치도면', [vdrText, el('a', { class: 'pid-open', href: vdrUrl, target: '_blank', rel: 'noopener', text: '열기' })]);
+          } else {
+            row('제작사(OEM) 설치도면', vdrText + (vdr.file_path ? '[열람 가능]' : '[목록만 확인됨, 실물 미변환]'));
+          }
         }
         var srcLabel = SOURCE_LABEL[fi.source_doc] || cleanStr(fi.source_doc);
         var pv = fi.source_doc === 'BOP-INDEX' ? provenance[0] : null;

@@ -90,3 +90,15 @@ test('server sheet index replaces per-variant search_logic scans',async()=>{
  await old.runSearch('MS-FT01B');
  assert.ok(oldCalls.includes('search_logic'));
 });
+test('supplier pid_dwg_no merges into the KOSEP drawing once with an alias; unresolved numbers stay raw',()=>{
+ const {api,nodes}=app();
+ const fi=(no,res)=>({raw_tag:'X',pid_dwg_no:no,service_desc:'S',...(res?{pid_dwg_resolved:res}:{})});
+ const res={kosep_id:'L-31300-LM-105-001',title:'TURBINE STEAM',file_path:'a/b.pdf',pdf_page:3};
+ const lookup={usages:[],field_instruments:[fi('310PB52-576',res),fi('310PB52-576',res),fi('ZZ-1')]};
+ const r=api.finalize('X',{variants:[]},lookup,[],[],{results:[]});
+ assert.deepEqual([...r.drawings.map(d=>d.dwg_no)],['L-31300-LM-105-001','ZZ-1']);
+ assert.deepEqual([...r.drawings[0].aliases],['310PB52-576']);
+ api.renderResults(r);
+ assert.match(nodes.results.textContent,/\(= 히타치 번호 310PB52-576\)/);
+ assert.match(nodes.results.textContent,/도면번호 읽는 법/);
+});
