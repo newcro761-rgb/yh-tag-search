@@ -167,3 +167,15 @@ test('tag_auto renders section with redundancy, sheets, used_by overflow, trip b
  no.api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'A'}]},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
  assert.doesNotMatch(no.nodes.results.textContent,/자동 추출/);
 });
+
+test('tag_auto.ai_note shows AI draft with confidence and uncertain; hidden when reviewed tag_note exists',()=>{
+ const ta={entry_sheets:[],used_by:[],used_by_total:0,trip_paths:[],trip_path_basis:[],trip_level:null,redundancy:[],method:'auto_v1',
+  ai_note:{note:'줄1\n줄2',sources:[{kind:'logic_sheet',ref:'23-421'}],confidence:'low',uncertain:'투표 방식 미확인'}};
+ const {api,nodes}=app();
+ api.renderResults({rawInput:'X',lookup:{...emptyLookup,tag_auto:ta},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ const t=nodes.results.textContent;
+ assert.match(t,/AI 설명 \(검토 전\) · 근거 부족/);assert.match(t,/확인 못 한 것: 투표 방식 미확인/);assert.match(t,/로직 시트 23-421/);
+ const r=app();
+ r.api.renderResults({rawInput:'X',lookup:{...emptyLookup,tag_note:{note:'검토본',sources:[]},tag_auto:ta},logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ assert.doesNotMatch(r.nodes.results.textContent,/AI 설명/);
+});

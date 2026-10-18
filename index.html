@@ -452,6 +452,9 @@
   .auto-trip-head { font-weight: 700; font-size: 13.5px; margin: 0 0 6px; }
   .auto-trip-path { font-size: 13px; line-height: 1.5; margin: 4px 0 0; }
   .auto-trip-basis { font-size: 11.5px; opacity: .8; margin-left: 6px; }
+  .ai-note { border-left: 3px solid var(--fg-faint); padding: 2px 0 8px 12px; margin: 0 0 12px; }
+  .ai-note-head { margin: 0; font-size: 13px; font-weight: 600; color: var(--fg-muted); }
+  .ai-note-uncertain { margin: 6px 0 0; font-size: 12.5px; color: var(--fg-muted); }
   .tag-note-review, .conflict-note { font-size: 12px; color: var(--fg-faint); margin: 6px 0 0; }
   .conflict-attr { font-weight: 700; font-size: 13px; margin: 10px 0 4px; }
   .conflict-val { font-size: 13px; padding: 4px 0; border-top: 1px solid var(--border); }
@@ -1269,7 +1272,23 @@
   }
 
   // 자동 추출(migration 018): 프로그램이 계산한 시트 연결 요약 — 사람 검토 전
-  function buildTagAuto(ta) {
+  // AI가 자동 추출 자료로 쓴 설명(검토 전). 사람이 승인하면 서버가 tag_note로 내려 주므로 그때는 숨긴다.
+  function buildAiNote(an) {
+    var CONF = { high: '근거 충분', medium: '근거 보통', low: '근거 부족' };
+    var srcs = (Array.isArray(an.sources) ? an.sources : []).map(function (s) {
+      var kind = { logic_sheet: '로직 시트', manual: '해설서', drawing: '도면' }[s.kind] || cleanStr(s.kind);
+      return el('li', { text: kind + ' ' + cleanStr(s.ref) + (s.page ? ' p.' + s.page : '') });
+    });
+    return el('div', { class: 'ai-note' }, [
+      el('p', { class: 'ai-note-head', text: 'AI 설명 (검토 전)' + (CONF[an.confidence] ? ' · ' + CONF[an.confidence] : '') }),
+      el('p', { class: 'tag-note-text', text: String(an.note) }),
+      cleanStr(an.uncertain) ? el('p', { class: 'ai-note-uncertain', text: '확인 못 한 것: ' + cleanStr(an.uncertain) }) : null,
+      srcs.length ? el('ul', { class: 'tag-note-src' }, srcs) : null,
+      el('p', { class: 'tag-note-review', text: '로직 시트 발췌로 AI가 쓴 초안입니다. 틀릴 수 있으니 원본 시트로 확인하세요.' })
+    ]);
+  }
+
+  function buildTagAuto(ta, hasReviewedNote) {
     var sheetLabel = function (x) { return [cleanStr(x.ref), cleanStr(x.title)].filter(Boolean).join(' '); };
     var RED = { median: '중간값 선택', '2of3': '3개 중 2개 판정', group_title: '같은 시트에 묶인 계기 그룹' };
     var red = (Array.isArray(ta.redundancy) ? ta.redundancy : []).map(function (r) { return RED[r] || cleanStr(r); }).filter(Boolean);
@@ -1278,7 +1297,9 @@
     var total = Number(ta.used_by_total) || used.length;
     var paths = (Array.isArray(ta.trip_paths) ? ta.trip_paths : []).filter(Array.isArray);
     var basis = Array.isArray(ta.trip_path_basis) ? ta.trip_path_basis : [];
-    var kids = [el('p', { class: 'auto-muted', text: '로직 시트 연결을 프로그램이 계산한 결과입니다. 사람이 확인하지 않았습니다.' })];
+    var kids = [];
+    if (!hasReviewedNote && ta.ai_note && cleanStr(ta.ai_note.note)) kids.push(buildAiNote(ta.ai_note));
+    kids.push(el('p', { class: 'auto-muted', text: '로직 시트 연결을 프로그램이 계산한 결과입니다. 사람이 확인하지 않았습니다.' }));
     if (red.length) kids.push(el('p', { class: 'auto-line', text: '다중화: ' + red.join(', ') }));
     if (entry.length) kids.push(el('p', { class: 'auto-line', text: '쓰이는 시트: ' + entry.join(', ') }));
     if (used.length) {
@@ -1523,7 +1544,7 @@
     ]);
     results.appendChild(summaryCard);
     if (tagNote) results.appendChild(buildTagNote(tagNote));
-    if (tagAuto) results.appendChild(buildTagAuto(tagAuto));
+    if (tagAuto) results.appendChild(buildTagAuto(tagAuto, !!tagNote));
 
     // ② P&ID 도면번호
     if (drawings.length) {
