@@ -2,6 +2,9 @@
 <title>설비 태그 검색</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <script>
 (function () {
   try {
@@ -14,132 +17,132 @@
 </script>
 <style>
   :root {
-    --bg: #f5f6f8;
-    --bg-raised: #ffffff;
-    --bg-sunken: #eceef1;
-    --fg: #1a1d21;
-    --fg-muted: #5b6470;
-    --fg-faint: #8b93a0;
-    --border: #d7dbe0;
-    --border-strong: #b9c0c9;
-    --accent: #0f6e7a;
+    --bg: #ffffff;
+    --bg-raised: #f7f7f7;
+    --bg-sunken: #efefef;
+    --fg: #0f0f0f;
+    --fg-muted: #6b6b6b;
+    --fg-faint: #9c9c9c;
+    --border: #e5e5e5;
+    --border-strong: #cecece;
+    --accent: #5E6AD2;
     --accent-fg: #ffffff;
-    --accent-soft-bg: #e2f1f2;
-    --accent-soft-fg: #0a4d56;
-    --focus: #0f6e7a;
+    --accent-soft-bg: #eceeff;
+    --accent-soft-fg: #3d48b5;
+    --focus: #5E6AD2;
 
-    --trip-bg: #fbe6e3;
-    --trip-fg: #8f2c1f;
-    --trip-stripe: #c0392b;
-    --interlock-bg: #fbebd6;
-    --interlock-fg: #7a4a00;
-    --protection-bg: #efe4f7;
-    --protection-fg: #5b2c82;
-    --annunciator-bg: #faf1cf;
-    --annunciator-fg: #6b5400;
-    --sequence-bg: #dfe9f7;
-    --sequence-fg: #1e4a80;
-    --control-bg: #e3eeee;
-    --control-fg: #2c5c5c;
+    --trip-bg: #fff0f0;
+    --trip-fg: #c0392b;
+    --trip-stripe: #e74c3c;
+    --interlock-bg: #fff8ec;
+    --interlock-fg: #9a6000;
+    --protection-bg: #f5eeff;
+    --protection-fg: #6b30a8;
+    --annunciator-bg: #fffbea;
+    --annunciator-fg: #836a00;
+    --sequence-bg: #eef3ff;
+    --sequence-fg: #2754c5;
+    --control-bg: #edfaf9;
+    --control-fg: #267070;
 
-    --confirmed-bg: #dff0e6;
-    --confirmed-fg: #206a44;
-    --mentioned-bg: #eceef1;
-    --mentioned-fg: #5b6470;
+    --confirmed-bg: #edfbf0;
+    --confirmed-fg: #1a7a42;
+    --mentioned-bg: #f7f7f7;
+    --mentioned-fg: #6b6b6b;
 
-    --shadow: 0 1px 2px rgba(20, 24, 28, 0.06), 0 1px 1px rgba(20, 24, 28, 0.04);
-    --radius: 10px;
-    --font-ui: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI", sans-serif;
-    --font-mono: ui-monospace, "SF Mono", "Roboto Mono", "Consolas", "Malgun Gothic", monospace;
+    --shadow: 0 1px 2px rgba(0,0,0,0.05), 0 1px 1px rgba(0,0,0,0.03);
+    --radius: 8px;
+    --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Consolas", monospace;
   }
 
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg: #14171a;
-      --bg-raised: #1c2024;
-      --bg-sunken: #101315;
-      --fg: #e8eaed;
-      --fg-muted: #9aa3ad;
-      --fg-faint: #6b7480;
-      --border: #2c3238;
-      --border-strong: #3c444c;
-      --accent: #4fb8c4;
-      --accent-fg: #06282c;
-      --accent-soft-bg: #17383c;
-      --accent-soft-fg: #8fdbe3;
-      --focus: #4fb8c4;
+      --bg: #0e0e0e;
+      --bg-raised: #1a1a1a;
+      --bg-sunken: #111111;
+      --fg: #f0f0f0;
+      --fg-muted: #9a9a9a;
+      --fg-faint: #6b6b6b;
+      --border: #252525;
+      --border-strong: #333333;
+      --accent: #8b91e3;
+      --accent-fg: #0e0e0e;
+      --accent-soft-bg: #1e2040;
+      --accent-soft-fg: #b3b7f2;
+      --focus: #8b91e3;
 
-      --trip-bg: #3a1e1a;
-      --trip-fg: #f3a396;
-      --trip-stripe: #e0574a;
-      --interlock-bg: #3a2c14;
-      --interlock-fg: #f0c37c;
-      --protection-bg: #2c2038;
-      --protection-fg: #cba6ec;
-      --annunciator-bg: #342f14;
-      --annunciator-fg: #e8d17e;
-      --sequence-bg: #17263a;
-      --sequence-fg: #9dc2ef;
-      --control-bg: #1a2c2c;
-      --control-fg: #8fc7c7;
+      --trip-bg: #2a1111;
+      --trip-fg: #f0817a;
+      --trip-stripe: #e74c3c;
+      --interlock-bg: #2a1f0a;
+      --interlock-fg: #f0c07c;
+      --protection-bg: #1e1430;
+      --protection-fg: #c69ef0;
+      --annunciator-bg: #252010;
+      --annunciator-fg: #e8d48a;
+      --sequence-bg: #101828;
+      --sequence-fg: #8ab8f0;
+      --control-bg: #0f2020;
+      --control-fg: #80c8c8;
 
-      --confirmed-bg: #163b28;
-      --confirmed-fg: #7fd6a6;
-      --mentioned-bg: #23282d;
-      --mentioned-fg: #9aa3ad;
+      --confirmed-bg: #0f2a1a;
+      --confirmed-fg: #6fd4a0;
+      --mentioned-bg: #1a1a1a;
+      --mentioned-fg: #9a9a9a;
 
-      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+      --shadow: 0 1px 3px rgba(0,0,0,0.5);
     }
   }
 
   :root[data-theme="dark"] {
-    --bg: #14171a;
-    --bg-raised: #1c2024;
-    --bg-sunken: #101315;
-    --fg: #e8eaed;
-    --fg-muted: #9aa3ad;
-    --fg-faint: #6b7480;
-    --border: #2c3238;
-    --border-strong: #3c444c;
-    --accent: #4fb8c4;
-    --accent-fg: #06282c;
-    --accent-soft-bg: #17383c;
-    --accent-soft-fg: #8fdbe3;
-    --focus: #4fb8c4;
-    --trip-bg: #3a1e1a; --trip-fg: #f3a396; --trip-stripe: #e0574a;
-    --interlock-bg: #3a2c14; --interlock-fg: #f0c37c;
-    --protection-bg: #2c2038; --protection-fg: #cba6ec;
-    --annunciator-bg: #342f14; --annunciator-fg: #e8d17e;
-    --sequence-bg: #17263a; --sequence-fg: #9dc2ef;
-    --control-bg: #1a2c2c; --control-fg: #8fc7c7;
-    --confirmed-bg: #163b28; --confirmed-fg: #7fd6a6;
-    --mentioned-bg: #23282d; --mentioned-fg: #9aa3ad;
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    --bg: #0e0e0e;
+    --bg-raised: #1a1a1a;
+    --bg-sunken: #111111;
+    --fg: #f0f0f0;
+    --fg-muted: #9a9a9a;
+    --fg-faint: #6b6b6b;
+    --border: #252525;
+    --border-strong: #333333;
+    --accent: #8b91e3;
+    --accent-fg: #0e0e0e;
+    --accent-soft-bg: #1e2040;
+    --accent-soft-fg: #b3b7f2;
+    --focus: #8b91e3;
+    --trip-bg: #2a1111; --trip-fg: #f0817a; --trip-stripe: #e74c3c;
+    --interlock-bg: #2a1f0a; --interlock-fg: #f0c07c;
+    --protection-bg: #1e1430; --protection-fg: #c69ef0;
+    --annunciator-bg: #252010; --annunciator-fg: #e8d48a;
+    --sequence-bg: #101828; --sequence-fg: #8ab8f0;
+    --control-bg: #0f2020; --control-fg: #80c8c8;
+    --confirmed-bg: #0f2a1a; --confirmed-fg: #6fd4a0;
+    --mentioned-bg: #1a1a1a; --mentioned-fg: #9a9a9a;
+    --shadow: 0 1px 3px rgba(0,0,0,0.5);
   }
 
   :root[data-theme="light"] {
-    --bg: #f5f6f8;
-    --bg-raised: #ffffff;
-    --bg-sunken: #eceef1;
-    --fg: #1a1d21;
-    --fg-muted: #5b6470;
-    --fg-faint: #8b93a0;
-    --border: #d7dbe0;
-    --border-strong: #b9c0c9;
-    --accent: #0f6e7a;
+    --bg: #ffffff;
+    --bg-raised: #f7f7f7;
+    --bg-sunken: #efefef;
+    --fg: #0f0f0f;
+    --fg-muted: #6b6b6b;
+    --fg-faint: #9c9c9c;
+    --border: #e5e5e5;
+    --border-strong: #cecece;
+    --accent: #5E6AD2;
     --accent-fg: #ffffff;
-    --accent-soft-bg: #e2f1f2;
-    --accent-soft-fg: #0a4d56;
-    --focus: #0f6e7a;
-    --trip-bg: #fbe6e3; --trip-fg: #8f2c1f; --trip-stripe: #c0392b;
-    --interlock-bg: #fbebd6; --interlock-fg: #7a4a00;
-    --protection-bg: #efe4f7; --protection-fg: #5b2c82;
-    --annunciator-bg: #faf1cf; --annunciator-fg: #6b5400;
-    --sequence-bg: #dfe9f7; --sequence-fg: #1e4a80;
-    --control-bg: #e3eeee; --control-fg: #2c5c5c;
-    --confirmed-bg: #dff0e6; --confirmed-fg: #206a44;
-    --mentioned-bg: #eceef1; --mentioned-fg: #5b6470;
-    --shadow: 0 1px 2px rgba(20, 24, 28, 0.06), 0 1px 1px rgba(20, 24, 28, 0.04);
+    --accent-soft-bg: #eceeff;
+    --accent-soft-fg: #3d48b5;
+    --focus: #5E6AD2;
+    --trip-bg: #fff0f0; --trip-fg: #c0392b; --trip-stripe: #e74c3c;
+    --interlock-bg: #fff8ec; --interlock-fg: #9a6000;
+    --protection-bg: #f5eeff; --protection-fg: #6b30a8;
+    --annunciator-bg: #fffbea; --annunciator-fg: #836a00;
+    --sequence-bg: #eef3ff; --sequence-fg: #2754c5;
+    --control-bg: #edfaf9; --control-fg: #267070;
+    --confirmed-bg: #edfbf0; --confirmed-fg: #1a7a42;
+    --mentioned-bg: #f7f7f7; --mentioned-fg: #6b6b6b;
+    --shadow: 0 1px 2px rgba(0,0,0,0.05), 0 1px 1px rgba(0,0,0,0.03);
   }
 
   * { box-sizing: border-box; }
