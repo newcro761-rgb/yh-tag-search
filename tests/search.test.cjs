@@ -24,6 +24,74 @@ function app(){
  vm.runInContext(source,context);
  return {api:context.api,nodes};
 }
+test('equipment ledger alone renders five sections, optional values and historical stock with provenance',()=>{
+ const {api,nodes}=app();
+ const lookup={...emptyLookup,equipment_ledger:{records:[{tag:'TEST-PT01',source:{file:'fixture.xlsx',sheet:'Sheet A',row:7},specification:'Test specification',material_no:'TEST-M',service:'Test service',drawing_no:'TEST-D',stock_snapshot:0,purchases:[{year:2020,quantity:0}],manufacturer:'Test maker',model:'Test model',storage:'Test shelf',notes:'Test note',drawings:[{url:'https://example.invalid/test.pdf',title:'Test drawing',source:'Fixture source'}]},{}]}};
+ api.renderResults({rawInput:'TEST-PT01',lookup,logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ const ledger=nodes.results.children[0];
+ assert.equal(ledger.className,'equipment-ledger');
+ assert.equal(tree(ledger).filter(n=>n.tag==='section').length,5);
+ for(const label of ['주요 사양','실제 도면','연결 정보','재고·정비','검토 공백','미확인','미확보','검토 전','기준일 미확인','현재 재고가 아닙니다','fixture.xlsx','Sheet A','7행','Test specification','TEST-M','Test service','TEST-D','Test maker','Test model','Test shelf','Test note','2020년 · 0']) assert.ok(ledger.textContent.includes(label),label);
+ assert.ok(tree(ledger).some(n=>n.tag==='dd' && n.text==='0'));
+ assert.ok(tree(ledger).some(n=>n.attrs.href==='https://example.invalid/test.pdf'));
+});
+
+test('ledger uses safe text, blocks unsafe drawing links and tolerates sparse records',()=>{
+ const {api,nodes}=app();
+ const hostile='<img src=x onerror=alert(1)>';
+ const lookup={...emptyLookup,equipment_ledger:{records:[null,[],{tag:hostile,specification:hostile,source:{file:hostile,row:0},purchases:[null,{}],drawings:[null,{url:'javascript:alert(1)',title:hostile},{url:'data:text/html,test'},{url:'//example.invalid/a.pdf'},{url:'https://user:pass@example.invalid/a.pdf'}]},{}]}};
+ api.renderResults({rawInput:'TEST-01',lookup,logicSheets:[],drawings:[],gen:{variants:[]},callLog:[]});
+ const ledger=nodes.results.children[0], all=tree(ledger);
+ assert.ok(ledger.textContent.includes(hostile));
+ assert.ok(ledger.textContent.includes('0행'));
+ assert.ok(ledger.textContent.includes('실물 파일 미확보'));
+ assert.equal(all.filter(n=>n.tag==='img' || n.tag==='script').length,0);
+ assert.equal(all.filter(n=>n.tag==='a' && n.attrs.target==='_blank').length,0);
+ assert.ok(ledger.textContent.includes('미확인년 · 미확인'));
+});
+
+test('ledger preserves separate record provenance and legacy detail without claiming current stock',()=>{
+ const {api,nodes}=app();
+ const lookup={...emptyLookup,field_instruments:[{raw_tag:'TEST-01',maker:'Legacy maker',source_doc:'TEST-INDEX',set_point:0}],equipment_ledger:{records:[{source:{file:'fixture-a.xlsx',row:1},model:'Model A'},{source:{file:'fixture-b.xlsx',row:2},model:'Model B'}]}};
+ api.renderResults({rawInput:'TEST-01',lookup,logicSheets:[],drawings:[],gen:{variants:[]},callLog:[]});
+ const ledger=nodes.results.children[0];
+ const records=tree(ledger).filter(n=>n.className==='ledger-record');
+ assert.match(records[0].textContent,/Model A.*fixture-a.xlsx/s);
+ assert.doesNotMatch(records[0].textContent,/Model B/);
+ assert.match(records[1].textContent,/Model B.*fixture-b.xlsx/s);
+ assert.match(ledger.textContent,/Legacy maker/);
+ assert.match(ledger.textContent,/TEST-INDEX/);
+ assert.match(nodes.results.textContent,/현장계기 정보/);
+ assert.match(ledger.textContent,/현재 재고가 아닙니다/);
+});
+
+test('legacy-only results still receive ledger and malformed optional ledger never breaks them',()=>{
+ for(const equipment_ledger of [undefined,null,{}, {records:null},{records:'invalid'},{records:[null,[]]}]){
+  const {api,nodes}=app();
+  api.renderResults({rawInput:'TEST-01',lookup:{...emptyLookup,field_instruments:[{raw_tag:'TEST-01'}],equipment_ledger},logicSheets:[],drawings:[],gen:{variants:[]},callLog:[]});
+  assert.equal(nodes.results.children[0].className,'equipment-ledger');
+  assert.match(nodes.results.textContent,/설비대장 원문 근거 미확보/);
+  assert.match(nodes.results.textContent,/현장계기 정보/);
+ }
+});
+
+test('embedded raster drawings render safe preview, keyboard zoom and candidate provenance',()=>{
+ const {api,nodes}=app();
+ // Deliberately tiny inert fixture; never a work drawing.
+ const image='data:image/png;base64,iVBORw0KGgo=';
+ const lookup={...emptyLookup,equipment_ledger:{records:[{drawings:[{url:image,title:'Fixture image',source:{file:'fixture.xlsx',sheet:'Drawing',row:1},match_status:'sheet_name_candidate'},{url:'data:image/svg+xml;base64,PHN2Zz4='},{url:'data:text/html;base64,PHNjcmlwdD4='}]}]}};
+ api.renderResults({rawInput:'TEST-01',lookup,logicSheets:[],drawings:[],gen:{variants:[]},callLog:[]});
+ const ledger=nodes.results.children[0], all=tree(ledger);
+ assert.equal(all.filter(n=>n.tag==='img').length,2);
+ assert.ok(all.filter(n=>n.tag==='img').every(n=>n.attrs.src===image));
+ assert.equal(all.filter(n=>n.tag==='details').length,1);
+ assert.ok(all.some(n=>n.tag==='summary' && n.textContent.includes('도면 확대')));
+ assert.ok(all.some(n=>n.attrs.role==='region' && n.attrs.tabindex==='0'));
+ assert.ok(all.every(n=>n.tag!=='a' || !String(n.attrs.href).startsWith('data:')));
+ assert.match(ledger.textContent,/도면 후보 · 시트명 기반 연결, 태그 일치 미검토/);
+ assert.match(ledger.textContent,/fixture.xlsx/);
+});
+
 const envelope = data=>JSON.stringify({result:{content:[{type:'text',text:JSON.stringify(data)}]}});
 const emptyLookup={usages:[],field_instruments:[]};
 function tree(n){return [n,...n.children.flatMap(tree)];}

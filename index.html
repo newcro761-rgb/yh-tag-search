@@ -617,6 +617,51 @@
     font-size: 14px;
   }
   .gate-error { color: var(--trip-fg); font-size: 12.5px; margin-top: 10px; min-height: 16px; }
+  /* Ledger uses document sections, not nested result cards. */
+  .equipment-ledger { border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--bg); overflow: hidden; }
+  .ledger-header { padding: 24px 24px 18px; }
+  .ledger-header h2 { margin: 0 0 12px; font-size: 22px; line-height: 1.4; overflow-wrap: anywhere; letter-spacing: -.02em; }
+  .ledger-caution { color: var(--fg); background: var(--bg-raised); border: 1px solid var(--border-strong); padding: 12px 14px; font-size: 13px; line-height: 1.75; margin: 0; max-width: 75ch; }
+  .ledger-nav { display: flex; flex-wrap: wrap; gap: 4px 8px; padding: 8px 18px; border-block: 1px solid var(--border-strong); background: var(--bg-raised); }
+  .ledger-nav a { display: inline-flex; align-items: center; min-height: 44px; padding: 4px 8px; color: var(--fg); font-size: 13px; font-weight: 600; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+  .ledger-nav a:hover { background: var(--bg-sunken); }
+  .equipment-ledger a:focus-visible, .ledger-section:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+  .ledger-section { padding: 24px; scroll-margin-top: 24px; }
+  .ledger-section + .ledger-section { border-top: 1px solid var(--border-strong); }
+  .ledger-section h3 { margin: 0 0 16px; font-size: 17px; font-weight: 700; line-height: 1.5; }
+  .ledger-record + .ledger-record { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--border); }
+  .ledger-record h4 { margin: 0 0 12px; font-size: 13px; color: var(--fg); font-weight: 600; overflow-wrap: anywhere; }
+  .ledger-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 28px; margin: 0; }
+  .ledger-facts > div { min-width: 0; display: grid; grid-template-columns: minmax(0, 100px) minmax(0, 1fr); gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); align-content: start; }
+  .ledger-facts dt { color: var(--fg-muted); font-size: 12px; line-height: 1.7; }
+  .ledger-facts dd { margin: 0; color: var(--fg); font-size: 13px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .ledger-note, .ledger-source { margin: 10px 0 0; font-size: 12px; line-height: 1.75; color: var(--fg-muted); overflow-wrap: anywhere; white-space: pre-wrap; max-width: 75ch; }
+  .ledger-source { font-variant-numeric: tabular-nums; }
+  .ledger-drawings { list-style: none; padding: 0; margin: 16px 0 0; }
+  .ledger-drawings li { padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 13px; overflow-wrap: anywhere; }
+  .ledger-drawings a { color: var(--accent-soft-fg); text-underline-offset: 3px; line-height: 1.8; }
+  .ledger-drawings a:hover { text-decoration-thickness: 2px; }
+  .ledger-image { margin: 0; }
+  .ledger-image figcaption { font-size: 13px; font-weight: 600; line-height: 1.8; margin-bottom: 12px; overflow-wrap: anywhere; }
+  .ledger-image img { display: block; width: 100%; height: auto; background: #fff; border: 1px solid var(--border-strong); }
+  .ledger-image > img { max-height: 440px; object-fit: contain; }
+  .ledger-zoom { margin-top: 12px; }
+  .ledger-zoom summary { width: fit-content; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; color: var(--fg); font-weight: 600; }
+  .ledger-zoom summary:hover { background: var(--surface); }
+  .ledger-zoom summary:focus-visible, .ledger-zoom-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .ledger-zoom-scroll { max-height: 70vh; max-width: 100%; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-strong); }
+  .ledger-zoom-scroll img { width: auto; height: auto; max-width: none; max-height: none; border: 0; }
+  .ledger-gaps { padding-left: 20px; margin: 0; color: var(--fg); font-size: 13px; line-height: 1.8; }
+  .ledger-gaps li { padding: 4px 0; overflow-wrap: anywhere; }
+  .ledger-section .ledger-caution { margin-bottom: 16px; }
+  .equipment-ledger ::selection { color: var(--accent-fg); background: var(--accent); }
+  @media (max-width: 600px) {
+    .ledger-header, .ledger-section { padding: 20px 16px; }
+    .ledger-header h2 { font-size: 20px; }
+    .ledger-facts { grid-template-columns: minmax(0, 1fr); }
+    .ledger-facts > div { grid-template-columns: minmax(0, 100px) minmax(0, 1fr); }
+    .ledger-nav { padding: 6px 8px; gap: 0; }
+  }
 </style>
 
 <div class="gate" id="gateScreen">
@@ -1517,6 +1562,144 @@
     return drawingUrl('001 계측제어/01 TBN/003 Software/02 Control/' + files[sheet.logic_book]) + '#page=' + sheet.pdf_page;
   }
 
+  // The ledger is a source-by-source view, not an authoritative merged equipment master.
+  function ledgerRecords(lookup) {
+    var records = lookup && lookup.equipment_ledger && lookup.equipment_ledger.records;
+    return Array.isArray(records) ? records.filter(function (r) { return r && typeof r === 'object' && !Array.isArray(r); }) : [];
+  }
+  function ledgerText(value) {
+    if (value == null || value === '') return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    return '';
+  }
+  function ledgerSource(source) {
+    if (!source || typeof source !== 'object') return ledgerText(source) || '미확보';
+    return [ledgerText(source.file), ledgerText(source.sheet),
+      ledgerText(source.row) ? ledgerText(source.row) + '행' : ''].filter(Boolean).join(' · ') || '미확보';
+  }
+  function ledgerUrl(value) {
+    var url = ledgerText(value);
+    // No executable/data URLs, embedded credentials, controls or protocol-relative links.
+    return /^https?:\/\/[^\s/@?#]+(?:[/?#][^\s]*)?$/i.test(url) && !/[\x00-\x20\x7f\\<>"']/.test(url) ? url : null;
+  }
+  function ledgerImageUrl(value) {
+    var url = ledgerText(value);
+    return /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(url) ? url : null;
+  }
+
+  function buildEquipmentLedger(result, summaryBadges) {
+    var lookup = result.lookup || {}, records = ledgerRecords(lookup);
+    var instruments = Array.isArray(lookup.field_instruments) ? lookup.field_instruments : [];
+    var sheets = result.logicSheets || [], setpoints = lookup.setpoints || [];
+    function paragraph(text, cls) { return el('p', { class: cls || 'ledger-note', text: text }); }
+    function facts(pairs) {
+      return el('dl', { class: 'ledger-facts' }, pairs.map(function (p) {
+        return el('div', {}, [el('dt', { text: p[0] }), el('dd', { text: ledgerText(p[1]) || '미확인' })]);
+      }));
+    }
+    function sourceLine(value) { return paragraph('출처: ' + ledgerSource(value), 'ledger-source'); }
+    function section(id, title, children) { return el('section', { id: 'ledger-' + id, class: 'ledger-section', 'aria-labelledby': 'ledger-title-' + id }, [el('h3', { id: 'ledger-title-' + id, text: title })].concat(children)); }
+    var specs = [];
+    records.forEach(function (r, i) {
+      specs.push(el('div', { class: 'ledger-record' }, [
+        el('h4', { text: (ledgerText(r.tag) || '태그 미확인') + ' · 대장 원문 ' + (i + 1) }),
+        facts([['주요 사양', r.specification], ['자재번호', r.material_no], ['용도', r.service], ['제조사', r.manufacturer], ['모델', r.model], ['도면번호', r.drawing_no]]), sourceLine(r.source)
+      ]));
+    });
+    instruments.forEach(function (fi) {
+      specs.push(el('div', { class: 'ledger-record' }, [
+        el('h4', { text: '계기 정보 · ' + (ledgerText(fi.raw_tag) || '태그 미확인') }),
+        facts([['용도', fi.service_desc], ['제조사', fi.maker], ['모델', fi.model_no], ['레인지', fi.signal_range ? fi.signal_range + (fi.eng_unit ? ' ' + fi.eng_unit : '') : ''], ['위치', fi.location]]),
+        sourceLine(fi.source_doc), paragraph('원본 문서·리비전 및 값별 근거는 아래 현장계기 상세에서 확인하세요.')
+      ]));
+    });
+    if (!specs.length) specs.push(facts([['주요 사양', null], ['자재번호', null], ['제조사 / 모델', null]]), sourceLine(null));
+    var drawingRows = [], validDrawings = 0;
+    function drawingRow(title, url, source, number, imageUrl, matchStatus) {
+      if (url || imageUrl) validDrawings++;
+      drawingRows.push(el('li', {}, [
+        imageUrl ? el('figure', { class: 'ledger-image' }, [
+          el('figcaption', { text: title || number || '도면 제목 미확인' }),
+          el('img', { src: imageUrl, alt: (title || number || '도면') + ' · 원문 이미지, 검토 전', loading: 'lazy', decoding: 'async' }),
+          el('details', { class: 'ledger-zoom' }, [
+            el('summary', { text: '도면 확대 · 원본 크기로 보기' }),
+            paragraph('가로·세로 스크롤로 원본을 확인하세요. 닫으려면 위 확대 버튼을 다시 선택하세요.'),
+            el('div', { class: 'ledger-zoom-scroll', tabindex: '0', role: 'region', 'aria-label': (title || number || '도면') + ' 원본 크기 확대 · 스크롤 영역' }, [
+              el('img', { src: imageUrl, alt: (title || number || '도면') + ' · 확대 원문, 태그 일치 미검토', loading: 'lazy', decoding: 'async' })
+            ])
+          ]),
+          paragraph('원문 이미지 · 적용 여부·태그 일치·최신성 검토 전')
+        ]) : url ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: title || number || '도면 제목 미확인' }) : el('span', { text: (title || number || '도면 제목 미확인') + ' · 실물 파일 미확보' }),
+        matchStatus ? paragraph(matchStatus === 'sheet_name_candidate' ? '도면 후보 · 시트명 기반 연결, 태그 일치 미검토' : '연결 상태 (원문): ' + matchStatus + ' · 적용 여부 미검토') : null,
+        sourceLine(source)
+      ]));
+    }
+    records.forEach(function (r) {
+      var ds = Array.isArray(r.drawings) ? r.drawings.filter(function (d) { return d && typeof d === 'object'; }) : [];
+      ds.forEach(function (d) { drawingRow(ledgerText(d.title), ledgerUrl(d.url), d.source || r.source, ledgerText(r.drawing_no), ledgerImageUrl(d.url), ledgerText(d.match_status)); });
+      if (!ds.length && ledgerText(r.drawing_no)) drawingRow('', null, r.source, ledgerText(r.drawing_no));
+    });
+    (result.drawings || []).forEach(function (d) {
+      var url = drawingUrl(d.file_path);
+      if (url && d.pdf_page) url += '#page=' + d.pdf_page;
+      drawingRow([d.dwg_no, d.title].filter(Boolean).join(' · '), url, d.file_path, d.dwg_no);
+    });
+    Object.keys(lookup.related_drawings || {}).forEach(function (group) {
+      var items = lookup.related_drawings[group];
+      if (!Array.isArray(items)) return;
+      items.forEach(function (d) {
+        var url = drawingUrl(d.file_path);
+        if (url && d.pdf_page) url += '#page=' + d.pdf_page;
+        drawingRow([d.kosep_id || d.dwg_no, d.title].filter(Boolean).join(' · '), url, d.file_path, d.kosep_id || d.dwg_no);
+      });
+    });
+    var pid = instruments.map(function (fi) { return ledgerText(fi.pid_dwg_no); }).filter(Boolean);
+    var settings = setpoints.map(function (sp) { return ledgerText(sp.set_point) ? ledgerText(sp.set_point) + (ledgerText(sp.unit) ? ' ' + ledgerText(sp.unit) : '') + ' (' + (ledgerText(sp.doc_no) || '문서 미확인') + ')' : ''; }).filter(Boolean);
+    instruments.forEach(function (fi) { if (ledgerText(fi.set_point)) settings.push(ledgerText(fi.set_point) + ' (' + (ledgerText(fi.source_doc) || '출처 미확보') + ')'); });
+    var connections = [facts([
+      ['P&ID / 배치도 참조', pid.length ? pid.join(' / ') : null],
+      ['배선 / 단자', null], ['DCS 채널', null],
+      ['로직', sheets.length ? sheets.map(function (s) { return [s.logic_book, s.drop_no, s.sheet_no].filter(function (v) { return v != null; }).join(' / '); }).join(' · ') : null],
+      ['설정값 (출처별)', settings.length ? settings.join(' / ') : null]
+    ]), paragraph('P&ID / 배치도 출처: ' + (pid.length ? 'lookup_tag · field_instruments.pid_dwg_no (문서 근거는 아래 상세 참조)' : '미확보')),
+    paragraph('배선·단자·DCS 채널 근거: 미확보. 로직 시트의 연결은 실제 배선이나 트립 조건의 확정 근거가 아닙니다.'),
+    paragraph('로직·설정값 출처: ' + (sheets.length || setpoints.length ? '아래 로직 사용처·설정값 상세 참조' : '미확보'))];
+    var inventory = [paragraph('과거 재고 스냅샷 · 기준일 미확인. 현재 재고가 아닙니다. 구매 수량을 현재 재고나 사용 가능 수량으로 해석하지 마세요.', 'ledger-caution')];
+    (records.length ? records : [{}]).forEach(function (r, i) {
+      inventory.push(el('div', { class: 'ledger-record' }, [
+        records.length ? el('h4', { text: (ledgerText(r.tag) || '태그 미확인') + ' · 대장 원문 ' + (i + 1) }) : null,
+        facts([['과거 재고 기록', r.stock_snapshot], ['보관 위치', r.storage], ['대장 비고 (정비 확정 아님)', r.notes], ['확인된 정비 이력', null]]),
+        paragraph('구매 기록: ' + (Array.isArray(r.purchases) && r.purchases.length ? r.purchases.filter(function (p) { return p && typeof p === 'object'; }).map(function (p) { return (ledgerText(p.year) || '미확인') + '년 · ' + (ledgerText(p.quantity) || '미확인'); }).join(' / ') || '미확인' : '미확인')),
+        sourceLine(r.source)
+      ]));
+    });
+    var gaps = [];
+    if (!records.length) gaps.push('설비대장 원문 근거 미확보 — 계기·로직 결과만으로 대장 사양을 확정하지 마세요.');
+    records.forEach(function (r, i) {
+      var missing = [['사양','specification'],['자재번호','material_no'],['용도','service'],['제조사','manufacturer'],['모델','model'],['도면번호','drawing_no']].filter(function (p) { return !ledgerText(r[p[1]]); }).map(function (p) { return p[0]; });
+      if (missing.length) gaps.push('대장 원문 ' + (i + 1) + ': ' + missing.join(', ') + ' 미확인');
+      if (ledgerSource(r.source) === '미확보') gaps.push('대장 원문 ' + (i + 1) + ': 원문 위치 근거 미확보');
+    });
+    if (!validDrawings) gaps.push('실제 도면 파일 미확보 — 원본 파일과 리비전을 확보하세요.');
+    if (!sheets.length) gaps.push('로직 시트 근거 미확보');
+    gaps.push('배선·단자·채널 근거 미확보 — 배선도·I/O 목록을 대조하세요.');
+    gaps.push('재고 기준일·현재 수량·정비 이력 미확인 — 현장 및 관리 원장 확인 필요');
+    if ((lookup.value_conflicts || []).length) gaps.push('문서 간 값 충돌 있음 — 아래 출처별 차이를 검토하세요.');
+    gaps.push('전체 검토 전 — 최신 원본·현장과 대조하기 전 운전·정비 판단에 사용하지 마세요.');
+    var titles = [['specs','주요 사양'],['drawings','실제 도면'],['connections','연결 정보'],['inventory','재고·정비'],['gaps','검토 공백']];
+    return el('div', { class: 'equipment-ledger' }, [
+      el('header', { class: 'ledger-header' }, [el('h2', { text: result.rawInput.trim().toUpperCase() + ' · 설비대장' }),
+        paragraph('검토 전 · 출처별 조회 결과입니다. 최신성·현장 일치 여부는 확인되지 않았습니다. 미확인은 값 부재, 미확보는 근거 부재를 뜻합니다.', 'ledger-caution'),
+        summaryBadges.length ? el('div', { class: 'summary-badges' }, summaryBadges) : null]),
+      el('nav', { class: 'ledger-nav', 'aria-label': '설비대장 항목' }, titles.map(function (t) { return el('a', { href: '#ledger-' + t[0], text: t[1], onclick: function (event) { event.preventDefault(); var target = document.getElementById('ledger-' + t[0]); target.scrollIntoView({ block: 'start' }); target.setAttribute('tabindex', '-1'); target.focus({ preventScroll: true }); } }); })),
+      section('specs', '주요 사양', specs),
+      section('drawings', '실제 도면', [paragraph('링크는 조회된 원본 파일입니다. 열기 전에는 내용·리비전·최신성을 확인한 것이 아닙니다.'), drawingRows.length ? el('ul', { class: 'ledger-drawings' }, drawingRows) : paragraph('실물 도면 미확보')]),
+      section('connections', '연결 정보', connections), section('inventory', '재고·정비', inventory),
+      section('gaps', '검토 공백', [el('ul', { class: 'ledger-gaps' }, gaps.map(function (g) { return el('li', { text: g }); }))])
+    ]);
+  }
+
   function renderResults(result) {
     if (result.isBaseScan) { renderBaseScan(result); return; }
     clear(results);
@@ -1535,7 +1718,7 @@
 
     var hasAnything = instruments.length || setpoints.length || logicSheets.length || drawings.length ||
       manualMentions.length || manualSearch.length || Object.keys(relatedDrawings).length ||
-      tagNote || tagAuto || valueConflicts.length;
+      tagNote || tagAuto || valueConflicts.length || ledgerRecords(lookup).length;
 
     if (!hasAnything && (result.failures || []).length) { renderPartial(result); return; }
     if (!hasAnything) {
@@ -1554,11 +1737,7 @@
     logicSheets.forEach(function (s) { s.categories.forEach(function (c) { catSeen[c] = true; }); });
     ['interlock', 'protection'].forEach(function (c) { if (catSeen[c] && !summaryBadges.length) summaryBadges.push(badge(c)); });
 
-    var summaryCard = el('div', { class: 'card card-pad' }, [
-      el('p', { class: 'summary-tag', text: result.rawInput.trim().toUpperCase() }),
-      primaryDesc ? el('p', { class: 'summary-desc', text: primaryDesc }) : null,
-      summaryBadges.length ? el('div', { class: 'summary-badges' }, summaryBadges) : null
-    ]);
+    var summaryCard = buildEquipmentLedger(result, summaryBadges);
     results.appendChild(summaryCard);
     if (tagNote) results.appendChild(buildTagNote(tagNote));
     if (tagAuto) results.appendChild(buildTagAuto(tagAuto, !!tagNote));
