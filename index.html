@@ -850,6 +850,7 @@
     <nav class="app-tabs" role="tablist" aria-label="기능 탭">
       <button class="app-tab app-tab--active" id="tabTagSearch" role="tab" aria-selected="true" aria-controls="paneTagSearch">태그 검색</button>
       <button class="app-tab" id="tabCatalog" role="tab" aria-selected="false" aria-controls="paneCatalog">도면 자료실</button>
+      <button class="app-tab" id="tabEquipment" role="tab" aria-selected="false" aria-controls="paneEquipment">설비별 보기</button>
     </nav>
     <div class="topbar-right">
       <button class="theme-toggle" id="themeToggle" type="button" aria-label="테마 전환">
@@ -913,6 +914,17 @@
     </div>
     <div id="catalogResults" class="catalog-results" aria-live="polite" aria-label="도면 목록"></div>
     <div id="catalogPager" class="catalog-pager"></div>
+  </div>
+
+  <!-- ── 설비별 보기 탭 패널 ── -->
+  <div id="paneEquipment" role="tabpanel" aria-labelledby="tabEquipment" hidden>
+    <div class="catalog-toolbar">
+      <div class="catalog-filters" role="group" aria-label="설비 그룹 선택">
+        <span class="filter-label">설비</span>
+        <button class="equip-filter equip-filter--active" data-equip="TBN MSV" aria-pressed="true">TBN MSV</button>
+      </div>
+    </div>
+    <div id="equipResults" class="catalog-results" aria-live="polite" aria-label="설비 정보"></div>
   </div>
 
   <footer class="app-footer">영흥 5,6호기 계측제어 자료 · Plant Assistant 연동</footer>
@@ -2358,37 +2370,55 @@
 
   var tabTagSearch   = document.getElementById('tabTagSearch');
   var tabCatalog     = document.getElementById('tabCatalog');
+  var tabEquipment   = document.getElementById('tabEquipment');
   var paneTagSearch  = document.getElementById('paneTagSearch');
   var paneCatalog    = document.getElementById('paneCatalog');
+  var paneEquipment  = document.getElementById('paneEquipment');
   var catalogResults = document.getElementById('catalogResults');
   var catalogPager   = document.getElementById('catalogPager');
   var catalogSearchForm  = document.getElementById('catalogSearchForm');
   var catalogSearchInput = document.getElementById('catalogSearchInput');
+  var equipResults   = document.getElementById('equipResults');
 
   // ── Tab switching ──
   function activateTab(tab) {
-    var isTag = (tab === 'tag');
+    var isTag  = (tab === 'tag');
+    var isCat  = (tab === 'catalog');
+    var isEquip= (tab === 'equipment');
     tabTagSearch.classList.toggle('app-tab--active', isTag);
     tabTagSearch.setAttribute('aria-selected', String(isTag));
-    tabCatalog.classList.toggle('app-tab--active', !isTag);
-    tabCatalog.setAttribute('aria-selected', String(!isTag));
+    tabCatalog.classList.toggle('app-tab--active', isCat);
+    tabCatalog.setAttribute('aria-selected', String(isCat));
+    tabEquipment.classList.toggle('app-tab--active', isEquip);
+    tabEquipment.setAttribute('aria-selected', String(isEquip));
     if (isTag) {
       paneTagSearch.removeAttribute('hidden');
       paneCatalog.setAttribute('hidden', '');
-    } else {
+      paneEquipment.setAttribute('hidden', '');
+    } else if (isCat) {
       paneCatalog.removeAttribute('hidden');
       paneTagSearch.setAttribute('hidden', '');
+      paneEquipment.setAttribute('hidden', '');
       // Auto-load on first visit
       if (catalogToken && catalogResults.children.length === 0) {
         loadCatalog(1);
       } else if (!catalogToken) {
         ensureCatalogSession().then(function() { loadCatalog(1); });
       }
+    } else {
+      paneEquipment.removeAttribute('hidden');
+      paneTagSearch.setAttribute('hidden', '');
+      paneCatalog.setAttribute('hidden', '');
+      // Auto-load on first visit
+      if (equipResults.children.length === 0) {
+        ensureCatalogSession().then(function() { loadEquipment('TBN MSV'); });
+      }
     }
   }
 
   tabTagSearch.addEventListener('click', function () { activateTab('tag'); });
   tabCatalog.addEventListener('click', function () { activateTab('catalog'); });
+  tabEquipment.addEventListener('click', function () { activateTab('equipment'); });
 
   // ── Session (server-signed token) ──
   function ensureCatalogSession() {
@@ -2615,6 +2645,184 @@
       });
     }, true); // capture phase — runs before existing handler clears the field
   })();
+
+  // ── Equipment view: load & render ──────────────────────────────────────────
+  function showEquipStatus(msg, isError) {
+    equipResults.innerHTML = '';
+    var s = document.createElement('div');
+    s.className = 'catalog-status';
+    if (isError) s.style.color = 'var(--error, #c33)';
+    s.textContent = msg;
+    equipResults.appendChild(s);
+  }
+
+  function loadEquipment(groupName) {
+    if (!catalogToken) {
+      showEquipStatus('로딩 중…', false);
+      ensureCatalogSession().then(function () {
+        if (catalogToken) loadEquipment(groupName);
+        else showEquipStatus('인증되지 않았습니다. PIN을 입력 후 다시 시도해주세요.', true);
+      });
+      return;
+    }
+    showEquipStatus('로딩 중…', false);
+    var params = new URLSearchParams();
+    params.set('name', groupName);
+    fetch(CATALOG_BASE + '/catalog/equipment?' + params.toString(), {
+      headers: { 'Authorization': 'Bearer ' + catalogToken, 'Cache-Control': 'no-cache' }
+    })
+      .then(function (res) {
+        if (res.status === 401) { catalogToken = null; showEquipStatus('세션이 만료되었습니다. 탭을 다시 클릭해주세요.', true); return null; }
+        if (!res.ok) { showEquipStatus('서버 오류 (' + res.status + ')', true); return null; }
+        return res.json();
+      })
+      .then(function (data) { if (data) renderEquipmentResults(data); })
+      .catch(function (e) { showEquipStatus('네트워크 오류: ' + e.message, true); });
+  }
+
+  function renderEquipmentResults(data) {
+    equipResults.innerHTML = '';
+    var frag = document.createDocumentFragment();
+
+    // Header
+    var header = document.createElement('div');
+    header.style.cssText = 'margin-bottom:12px;';
+    var title = document.createElement('h2');
+    title.style.cssText = 'font-size:1rem;font-weight:600;margin:0 0 4px;';
+    title.textContent = data.label || data.name;
+    header.appendChild(title);
+    if (data.description) {
+      var desc = document.createElement('p');
+      desc.style.cssText = 'font-size:0.75rem;color:var(--muted);margin:0 0 4px;';
+      desc.textContent = data.description;
+      header.appendChild(desc);
+    }
+    // Counts summary
+    var counts = data.counts || {};
+    var summary = document.createElement('div');
+    summary.style.cssText = 'font-size:0.75rem;color:var(--muted);margin-bottom:4px;';
+    summary.textContent = '전체 ' + (counts.total || 0) + '개 · verified ' + (counts.verified || 0) + '개 · candidate ' + (counts.candidate || 0) + '개';
+    header.appendChild(summary);
+    // Missing-section notice
+    if (data.missing_sections && data.missing_sections.length > 0) {
+      var missDiv = document.createElement('div');
+      missDiv.style.cssText = 'font-size:0.72rem;color:var(--error,#c33);background:var(--bg-alt,#fdf6f6);border:1px solid var(--error,#c33);border-radius:4px;padding:4px 8px;margin-top:4px;';
+      missDiv.textContent = '⚠ 미완료: ' + data.missing_sections.join(' · ');
+      header.appendChild(missDiv);
+    }
+    if (data.notice) {
+      var noticeDiv = document.createElement('div');
+      noticeDiv.style.cssText = 'font-size:0.68rem;color:var(--muted);margin-top:4px;';
+      noticeDiv.textContent = '※ ' + data.notice;
+      header.appendChild(noticeDiv);
+    }
+    frag.appendChild(header);
+
+    // Verified tags section
+    if (data.verified && data.verified.length > 0) {
+      var vSect = document.createElement('details');
+      vSect.setAttribute('open', '');
+      var vSum = document.createElement('summary');
+      vSum.style.cssText = 'font-weight:600;font-size:0.85rem;cursor:pointer;padding:4px 0;';
+      vSum.textContent = '✓ 계기리스트 확정 태그 (' + data.verified.length + '개)';
+      vSect.appendChild(vSum);
+      data.verified.forEach(function (t) {
+        var row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0 6px 8px;border-bottom:1px solid var(--border);';
+        var tagEl = document.createElement('span');
+        tagEl.style.cssText = 'font-weight:600;font-family:monospace;font-size:0.85rem;';
+        tagEl.textContent = t.base_tag;
+        row.appendChild(tagEl);
+        if (t.drawings && t.drawings.length > 0) {
+          var dwgList = document.createElement('ul');
+          dwgList.style.cssText = 'margin:2px 0 0 12px;padding:0;list-style:disc;font-size:0.75rem;color:var(--muted);';
+          t.drawings.forEach(function (d) {
+            var li = document.createElement('li');
+            li.textContent = d.dwg_kind + ': ' + d.dwg_no + (d.title ? ' — ' + d.title : '');
+            dwgList.appendChild(li);
+          });
+          row.appendChild(dwgList);
+        }
+        if (t.logic_sheet_ids && t.logic_sheet_ids.length > 0) {
+          var sheetEl = document.createElement('div');
+          sheetEl.style.cssText = 'font-size:0.68rem;color:var(--muted);margin-top:2px;margin-left:8px;';
+          sheetEl.textContent = '로직 시트: ' + t.logic_sheet_ids.length + '개';
+          row.appendChild(sheetEl);
+        }
+        vSect.appendChild(row);
+      });
+      frag.appendChild(vSect);
+    }
+
+    // Candidate tags section
+    if (data.candidate && data.candidate.length > 0) {
+      var cSect = document.createElement('details');
+      cSect.setAttribute('open', '');
+      var cSum = document.createElement('summary');
+      cSum.style.cssText = 'font-weight:600;font-size:0.85rem;cursor:pointer;padding:4px 0;color:var(--warn,#b97000);';
+      cSum.textContent = '⚠ 로직시트 확인만 (P&ID/IID 미매핑) (' + data.candidate.length + '개)';
+      cSect.appendChild(cSum);
+      data.candidate.forEach(function (t) {
+        var row = document.createElement('div');
+        row.style.cssText = 'padding:6px 0 6px 8px;border-bottom:1px solid var(--border);';
+        var tagEl = document.createElement('span');
+        tagEl.style.cssText = 'font-weight:600;font-family:monospace;font-size:0.85rem;';
+        tagEl.textContent = t.base_tag;
+        row.appendChild(tagEl);
+        if (t.missing_sections && t.missing_sections.length > 0) {
+          var missEl = document.createElement('div');
+          missEl.style.cssText = 'font-size:0.72rem;color:var(--error,#c33);margin-left:8px;margin-top:1px;';
+          missEl.textContent = '미완료: ' + t.missing_sections.join(', ');
+          row.appendChild(missEl);
+        }
+        if (t.logic_sheet_ids && t.logic_sheet_ids.length > 0) {
+          var tagSearch = document.createElement('a');
+          tagSearch.href = '#';
+          tagSearch.style.cssText = 'font-size:0.75rem;margin-left:8px;';
+          tagSearch.textContent = '태그 검색으로 보기';
+          tagSearch.setAttribute('data-tag', t.base_tag);
+          tagSearch.addEventListener('click', function (e) {
+            e.preventDefault();
+            var tag = this.getAttribute('data-tag');
+            var searchInput = document.getElementById('searchInput');
+            var searchForm = document.getElementById('searchForm');
+            if (searchInput && searchForm) {
+              activateTab('tag');
+              searchInput.value = tag;
+              searchForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+            }
+          });
+          row.appendChild(tagSearch);
+          var sheetEl = document.createElement('div');
+          sheetEl.style.cssText = 'font-size:0.68rem;color:var(--muted);margin-top:2px;margin-left:8px;';
+          sheetEl.textContent = '로직 시트: ' + t.logic_sheet_ids.length + '개';
+          row.appendChild(sheetEl);
+        }
+        cSect.appendChild(row);
+      });
+      frag.appendChild(cSect);
+    }
+
+    equipResults.appendChild(frag);
+  }
+
+  // Equipment filter buttons
+  document.querySelectorAll('.equip-filter').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.equip-filter').forEach(function (b) {
+        b.classList.remove('equip-filter--active');
+        b.setAttribute('aria-pressed', 'false');
+      });
+      btn.classList.add('equip-filter--active');
+      btn.setAttribute('aria-pressed', 'true');
+      var groupName = btn.getAttribute('data-equip') || '';
+      if (groupName) {
+        equipResults.innerHTML = '';
+        ensureCatalogSession().then(function () { loadEquipment(groupName); });
+      }
+    });
+  });
+
   }
 })();
 </script>
