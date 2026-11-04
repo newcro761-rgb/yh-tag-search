@@ -336,6 +336,41 @@
     color: var(--ok, #3c8);
     font-size: 0.72rem;
   }
+  /* Auxiliary catalog source button */
+  .catalog-source-btn {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 3px 10px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--fg-muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .catalog-source-btn--active {
+    background: var(--accent, #3b82f6);
+    color: #fff;
+    border-color: transparent;
+  }
+  .aux-badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    background: var(--warn-bg, #783);
+    color: #fff;
+    border-radius: 3px;
+    padding: 1px 4px;
+    margin-left: 2px;
+    white-space: nowrap;
+  }
+  .catalog-aux-source {
+    font-size: 0.68rem;
+    color: var(--fg-muted);
+    margin-top: 2px;
+    overflow-wrap: anywhere;
+  }
+  .catalog-aux-source span { margin-right: 6px; }
   .catalog-pager {
     padding: 8px 14px 12px;
     display: flex;
@@ -888,6 +923,11 @@
   <!-- ── 도면 자료실 탭 패널 ── -->
   <div id="paneCatalog" role="tabpanel" aria-labelledby="tabCatalog" hidden>
     <div class="catalog-toolbar">
+      <div class="catalog-filters" role="group" aria-label="데이터 소스 선택">
+        <span class="filter-label">출처</span>
+        <button class="catalog-source-btn catalog-source-btn--active" data-source="" aria-pressed="true">색인 카탈로그</button>
+        <button class="catalog-source-btn" data-source="aux" aria-pressed="false">메일 첨부 색인<span class="aux-badge">색인전용</span></button>
+      </div>
       <div class="catalog-filters" role="group" aria-label="분야 필터">
         <span class="filter-label">분야</span>
         <button class="catalog-filter catalog-filter--active" data-discipline="" aria-pressed="true">전체</button>
@@ -900,7 +940,7 @@
         <input
           id="catalogSearchInput"
           type="search"
-          placeholder="도면번호 또는 도면명 검색 (예: L-30000, PRESSURE)"
+          placeholder="도면번호·도면명·공급사번호 검색 (예: L-30000, PRESSURE, L-760-J157)"
           autocorrect="off"
           spellcheck="false"
           autocomplete="off"
@@ -909,7 +949,7 @@
         <button type="submit" id="catalogSearchBtn">검색</button>
       </form>
     </div>
-    <div class="catalog-note">
+    <div class="catalog-note" id="catalogSourceNote">
       <span class="discipline-note">분야 분류 추정·미확인 — 도면번호 중간 코드(UJ·LM·LE·LJ) 기반 추정, 공식 코드사전 미확인. 근거: 현재 색인된 도면 2,302건(계측제어 색인 출처 UJ9803 p.1–33, 타 코드 비확인)</span>
     </div>
     <div id="catalogResults" class="catalog-results" aria-live="polite" aria-label="도면 목록"></div>
@@ -2366,6 +2406,7 @@
   var catalogPage = 1;
   var catalogDiscipline = '';
   var catalogQ = '';
+  var catalogSource = ''; // '' = main drawings table; 'aux' = emailed index catalog
   var CATALOG_PAGE_SIZE = 50;
 
   var tabTagSearch   = document.getElementById('tabTagSearch');
@@ -2517,10 +2558,51 @@
         fileEl.textContent = '파일 보유';
         meta.appendChild(fileEl);
       }
+      // Aux catalog: "색인전용" badge (no linked original file)
+      if (d.source === 'aux') {
+        var auxEl = document.createElement('span');
+        auxEl.className = 'aux-badge';
+        auxEl.textContent = '색인전용';
+        meta.appendChild(auxEl);
+      }
 
       row.appendChild(meta);
 
-      // Source note (provenance)
+      // Aux catalog: source evidence (src_file, src_sheet, src_row)
+      if (d.source === 'aux' && (d.src_file || d.src_sheet)) {
+        var srcDiv = document.createElement('div');
+        srcDiv.className = 'catalog-aux-source';
+        if (d.src_file) {
+          var sfEl = document.createElement('span');
+          sfEl.textContent = '출처: ' + d.src_file;
+          srcDiv.appendChild(sfEl);
+        }
+        if (d.src_sheet) {
+          var ssEl = document.createElement('span');
+          ssEl.textContent = '시트: ' + d.src_sheet;
+          srcDiv.appendChild(ssEl);
+        }
+        if (d.src_row != null) {
+          var srEl = document.createElement('span');
+          srEl.textContent = 'row' + d.src_row;
+          srcDiv.appendChild(srEl);
+        }
+        // Supplier ID if available and different from kosep_id
+        if (d.supplier_id && d.supplier_id !== d.kosep_id) {
+          var sidEl = document.createElement('span');
+          sidEl.textContent = '공급사번호: ' + d.supplier_id;
+          srcDiv.appendChild(sidEl);
+        }
+        // Package/contractor
+        if (d.package_name) {
+          var pkgEl = document.createElement('span');
+          pkgEl.textContent = '패키지: ' + d.package_name;
+          srcDiv.appendChild(pkgEl);
+        }
+        row.appendChild(srcDiv);
+      }
+
+      // Source note (provenance) — main catalog only
       if (d.discipline_note) {
         var noteEl = document.createElement('div');
         noteEl.className = 'discipline-note';
@@ -2582,7 +2664,8 @@
     var params = new URLSearchParams();
     params.set('page', String(catalogPage));
     params.set('page_size', String(CATALOG_PAGE_SIZE));
-    if (catalogDiscipline) params.set('discipline', catalogDiscipline);
+    if (catalogSource) params.set('source', catalogSource);
+    if (catalogDiscipline && !catalogSource) params.set('discipline', catalogDiscipline);
     if (catalogQ) params.set('q', catalogQ);
 
     fetch(CATALOG_BASE + '/catalog/drawings?' + params.toString(), {
@@ -2602,6 +2685,30 @@
       })
       .catch(function (e) { showCatalogStatus('네트워크 오류: ' + e.message, true); });
   }
+
+  // ── Source selector buttons (main catalog vs aux emailed index) ──
+  var catalogSourceNote = document.getElementById('catalogSourceNote');
+  document.querySelectorAll('.catalog-source-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.catalog-source-btn').forEach(function (b) {
+        b.classList.remove('catalog-source-btn--active');
+        b.setAttribute('aria-pressed', 'false');
+      });
+      btn.classList.add('catalog-source-btn--active');
+      btn.setAttribute('aria-pressed', 'true');
+      catalogSource = btn.getAttribute('data-source') || '';
+      catalogQ = catalogSearchInput ? catalogSearchInput.value.trim() : '';
+      // Update source note
+      if (catalogSourceNote) {
+        if (catalogSource === 'aux') {
+          catalogSourceNote.innerHTML = '<span class="discipline-note">📋 메일 첨부 도면 색인 목록 (2026-11-05 수신) — KOSEP ID·공급사번호·제목 검색 가능. <strong>색인 출처 전용</strong>: 원본 PDF 파일 미연결. 출처: 도면 정보 전산 색인 목록 xlsx (전기 2,333 / 배관 5,709 / 계장 2,086 / 건축 1,116 / HVAC 267 / 기계 181 / 소방 119 / 토목 등). 총 13,224건 (중복제거).</span>';
+        } else {
+          catalogSourceNote.innerHTML = '<span class="discipline-note">분야 분류 추정·미확인 — 도면번호 중간 코드(UJ·LM·LE·LJ) 기반 추정, 공식 코드사전 미확인. 근거: 현재 색인된 도면 2,302건(계측제어 색인 출처 UJ9803 p.1–33, 타 코드 비확인)</span>';
+        }
+      }
+      loadCatalog(1);
+    });
+  });
 
   // ── Discipline filter buttons ──
   document.querySelectorAll('.catalog-filter').forEach(function (btn) {
