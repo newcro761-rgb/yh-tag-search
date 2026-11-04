@@ -259,3 +259,22 @@ test('ai_note.summary shown first, full note folded under 자세히',()=>{
  assert.ok(det, 'details 접힘 영역');
  assert.match(det.textContent,/자세히/);assert.match(det.textContent,/긴 설명/);
 });
+
+test('wiring and doc_refs fill connection fields, add a related-docs section, and links stay on the file server',()=>{
+ const {api,nodes}=app();
+ const lookup={...emptyLookup,wiring:{records:[{raw_tag:'5TB-PT-02A-A',description:'MAIN OIL PRESS',drop:'36/86',card:'111',channel:'1',signal:'AIHART',mr_cabinet:'TBN-MR-1',system_cabinet:'TBN-SYS-1',slot:'3',source:{file:'DROP36.xlsb',file_path:'001 계측제어/IWD/DROP36.xlsb',sheet:'Raw Data',row:9}},null]},
+  doc_refs:{refs:[{category:'보호·트립 로직',file:'Trip.pdf',file_path:'001 계측제어/Trip.pdf',page:3,excerpt:'TB-PT-02A LOW 0.5MPa'},{category:'화면',file:'TBN01.jpg',file_path:'javascript:alert(1)',page:1},null]}};
+ api.renderResults({rawInput:'TB-PT02A',lookup,logicSheets:[],drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+ const text=nodes.results.textContent;
+ assert.match(text,/Drop 36\/86 · Card 111 · CH 1 · AIHART/);
+ assert.match(text,/MR\/IR TBN-MR-1 · SYS TBN-SYS-1 · Slot 3/);
+ assert.match(text,/IWD DROP Raw Data 원문 1행/);
+ assert.match(text,/관련 문서/);
+ assert.match(text,/보호·트립 로직 · 1건/);
+ assert.match(text,/OCR 발췌 \(원문 대조 필요\): TB-PT-02A LOW 0.5MPa/);
+ assert.match(text,/배선·단자·채널: IWD 원문 추출값\(검토 전\)/);
+ assert.doesNotMatch(text,/배선·단자·DCS 채널 근거: 미확보/);
+ const links=[];(function walk(n){if(n.tag==='a'&&n.attrs.href)links.push(n.attrs.href);(n.children||[]).forEach(walk);})(nodes.results);
+ assert.ok(links.some(h=>/Trip\.pdf#page=3$/.test(h)));
+ assert.ok(links.every(h=>!/javascript:/i.test(h)));
+});

@@ -1657,14 +1657,45 @@
     var pid = instruments.map(function (fi) { return ledgerText(fi.pid_dwg_no); }).filter(Boolean);
     var settings = setpoints.map(function (sp) { return ledgerText(sp.set_point) ? ledgerText(sp.set_point) + (ledgerText(sp.unit) ? ' ' + ledgerText(sp.unit) : '') + ' (' + (ledgerText(sp.doc_no) || '문서 미확인') + ')' : ''; }).filter(Boolean);
     instruments.forEach(function (fi) { if (ledgerText(fi.set_point)) settings.push(ledgerText(fi.set_point) + ' (' + (ledgerText(fi.source_doc) || '출처 미확보') + ')'); });
+    var wiring = (lookup.wiring && Array.isArray(lookup.wiring.records)) ? lookup.wiring.records.filter(function (w) { return w && typeof w === 'object'; }) : [];
+    var docRefs = (lookup.doc_refs && Array.isArray(lookup.doc_refs.refs)) ? lookup.doc_refs.refs.filter(function (d) { return d && typeof d === 'object'; }) : [];
+    function uniq(list) { return list.filter(function (v, i) { return v && list.indexOf(v) === i; }); }
+    var cabinets = uniq(wiring.map(function (w) { return [ledgerText(w.mr_cabinet) && 'MR/IR ' + ledgerText(w.mr_cabinet), ledgerText(w.system_cabinet) && 'SYS ' + ledgerText(w.system_cabinet), ledgerText(w.slot) && 'Slot ' + ledgerText(w.slot), ledgerText(w.location)].filter(Boolean).join(' · '); }));
+    var channels = uniq(wiring.map(function (w) { return [ledgerText(w.raw_tag), ledgerText(w.drop) && 'Drop ' + ledgerText(w.drop), ledgerText(w.card) && 'Card ' + ledgerText(w.card), ledgerText(w.channel) && 'CH ' + ledgerText(w.channel), ledgerText(w.signal)].filter(Boolean).join(' · '); }));
     var connections = [facts([
       ['P&ID / 배치도 참조', pid.length ? pid.join(' / ') : null],
-      ['배선 / 단자', null], ['DCS 채널', null],
+      ['배선 / 단자', cabinets.length ? cabinets.join(' / ') : null], ['DCS 채널', channels.length ? channels.join(' / ') : null],
       ['로직', sheets.length ? sheets.map(function (s) { return [s.logic_book, s.drop_no, s.sheet_no].filter(function (v) { return v != null; }).join(' / '); }).join(' · ') : null],
       ['설정값 (출처별)', settings.length ? settings.join(' / ') : null]
     ]), paragraph('P&ID / 배치도 출처: ' + (pid.length ? 'lookup_tag · field_instruments.pid_dwg_no (문서 근거는 아래 상세 참조)' : '미확보')),
-    paragraph('배선·단자·DCS 채널 근거: 미확보. 로직 시트의 연결은 실제 배선이나 트립 조건의 확정 근거가 아닙니다.'),
+    paragraph(wiring.length ? '배선·단자·DCS 채널 출처: IWD DROP Raw Data 원문 ' + wiring.length + '행 · 검토 전. 아래 행별 원문 위치 참조' : '배선·단자·DCS 채널 근거: 미확보. 로직 시트의 연결은 실제 배선이나 트립 조건의 확정 근거가 아닙니다.'),
     paragraph('로직·설정값 출처: ' + (sheets.length || setpoints.length ? '아래 로직 사용처·설정값 상세 참조' : '미확보'))];
+    if (wiring.length) {
+      connections.push(el('details', { class: 'ledger-zoom' }, [el('summary', { text: '결선 원문 ' + wiring.length + '행 보기' }),
+        el('ul', { class: 'ledger-drawings' }, wiring.map(function (w) {
+          var src = w.source || {}, url = drawingUrl(src.file_path);
+          return el('li', {}, [
+            facts([['태그', w.raw_tag], ['설명', w.description], ['Drop / Card / CH', [w.drop, w.card, w.channel].map(ledgerText).filter(Boolean).join(' / ')], ['신호', w.signal], ['MR·IR / SYS 캐비닛', [w.mr_cabinet, w.system_cabinet].map(ledgerText).filter(Boolean).join(' / ')], ['도면번호', w.drawing_no], ['Rev', w.rev]]),
+            url ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: '원본 열기 · ' + ledgerSource(src) }) : sourceLine(src)
+          ]);
+        }))]));
+    }
+    var docGroups = {}, docOrder = ['결선', '보호·트립 로직', '교정·세팅', '사양', '화면', '도면·기타'];
+    docRefs.forEach(function (d) { var c = ledgerText(d.category) || '도면·기타'; (docGroups[c] = docGroups[c] || []).push(d); });
+    var docSection = Object.keys(docGroups).sort(function (a, b) { return docOrder.indexOf(a) - docOrder.indexOf(b); }).map(function (c) {
+      return el('details', c === '보호·트립 로직' || c === '교정·세팅' ? { class: 'ledger-zoom', open: '' } : { class: 'ledger-zoom' }, [el('summary', { text: c + ' · ' + docGroups[c].length + '건' }),
+        el('ul', { class: 'ledger-drawings' }, docGroups[c].map(function (d) {
+          var url = drawingUrl(d.file_path), page = Number(d.page);
+          if (url && Number.isInteger(page) && page > 0 && /\.pdf$/i.test(ledgerText(d.file_path))) url += '#page=' + page;
+          var label = ledgerText(d.file) + (Number.isInteger(page) && page > 0 ? ' · ' + page + '쪽' : '');
+          return el('li', {}, [
+            url ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer', text: label }) : el('span', { text: label + ' · 실물 파일 미확보' }),
+            ledgerText(d.excerpt) ? paragraph('OCR 발췌 (원문 대조 필요): ' + ledgerText(d.excerpt), 'ledger-source') : null,
+            ledgerText(d.note) ? paragraph(ledgerText(d.note), 'ledger-source') : null
+          ]);
+        }))]);
+    });
+    var docCount = function (c) { return (docGroups[c] || []).length; };
     var inventory = [paragraph('과거 재고 스냅샷 · 기준일 미확인. 현재 재고가 아닙니다. 구매 수량을 현재 재고나 사용 가능 수량으로 해석하지 마세요.', 'ledger-caution')];
     (records.length ? records : [{}]).forEach(function (r, i) {
       inventory.push(el('div', { class: 'ledger-record' }, [
@@ -1681,13 +1712,14 @@
       if (missing.length) gaps.push('대장 원문 ' + (i + 1) + ': ' + missing.join(', ') + ' 미확인');
       if (ledgerSource(r.source) === '미확보') gaps.push('대장 원문 ' + (i + 1) + ': 원문 위치 근거 미확보');
     });
-    if (!validDrawings) gaps.push('실제 도면 파일 미확보 — 원본 파일과 리비전을 확보하세요.');
-    if (!sheets.length) gaps.push('로직 시트 근거 미확보');
-    gaps.push('배선·단자·채널 근거 미확보 — 배선도·I/O 목록을 대조하세요.');
+    if (!validDrawings) gaps.push('실제 도면 파일 미확보 — ' + (docRefs.length ? '아래 관련 문서 ' + docRefs.length + '건(쪽 단위)을 참고하고 ' : '') + '원본 파일과 리비전을 확보하세요.');
+    if (!sheets.length) gaps.push('로직 시트 근거 미확보' + (docCount('보호·트립 로직') ? ' — 보호·트립 해설 문서 ' + docCount('보호·트립 로직') + '건은 관련 문서에서 확인' : ''));
+    gaps.push(wiring.length ? '배선·단자·채널: IWD 원문 추출값(검토 전) — 현장 결선 변경 여부를 최신 배선도와 대조하세요.' : '배선·단자·채널 근거 미확보 — 배선도·I/O 목록을 대조하세요.');
+    if (!settings.length && (docCount('보호·트립 로직') || docCount('교정·세팅'))) gaps.push('설정값 미확인 — 관련 문서(보호·트립·교정)에 태그가 등장합니다. 값은 해당 쪽 원문에서 확인하세요.');
     gaps.push('재고 기준일·현재 수량·정비 이력 미확인 — 현장 및 관리 원장 확인 필요');
     if ((lookup.value_conflicts || []).length) gaps.push('문서 간 값 충돌 있음 — 아래 출처별 차이를 검토하세요.');
     gaps.push('전체 검토 전 — 최신 원본·현장과 대조하기 전 운전·정비 판단에 사용하지 마세요.');
-    var titles = [['specs','주요 사양'],['drawings','실제 도면'],['connections','연결 정보'],['inventory','재고·정비'],['gaps','검토 공백']];
+    var titles = [['specs','주요 사양'],['drawings','실제 도면'],['connections','연결 정보']].concat(docRefs.length ? [['docs','관련 문서']] : []).concat([['inventory','재고·정비'],['gaps','검토 공백']]);
     return el('div', { class: 'equipment-ledger' }, [
       el('header', { class: 'ledger-header' }, [el('h2', { text: result.rawInput.trim().toUpperCase() + ' · 설비대장' }),
         paragraph('검토 전 · 출처별 조회 결과입니다. 최신성·현장 일치 여부는 확인되지 않았습니다. 미확인은 값 부재, 미확보는 근거 부재를 뜻합니다.', 'ledger-caution'),
@@ -1695,7 +1727,9 @@
       el('nav', { class: 'ledger-nav', 'aria-label': '설비대장 항목' }, titles.map(function (t) { return el('a', { href: '#ledger-' + t[0], text: t[1], onclick: function (event) { event.preventDefault(); var target = document.getElementById('ledger-' + t[0]); target.scrollIntoView({ block: 'start' }); target.setAttribute('tabindex', '-1'); target.focus({ preventScroll: true }); } }); })),
       section('specs', '주요 사양', specs),
       section('drawings', '실제 도면', [paragraph('링크는 조회된 원본 파일입니다. 열기 전에는 내용·리비전·최신성을 확인한 것이 아닙니다.'), drawingRows.length ? el('ul', { class: 'ledger-drawings' }, drawingRows) : paragraph('실물 도면 미확보')]),
-      section('connections', '연결 정보', connections), section('inventory', '재고·정비', inventory),
+      section('connections', '연결 정보', connections),
+      docRefs.length ? section('docs', '관련 문서', [paragraph('OCR로 이 태그가 등장한 문서·쪽입니다. 등장만 확인했고 값·적용 여부는 검토 전입니다.', 'ledger-caution')].concat(docSection)) : null,
+      section('inventory', '재고·정비', inventory),
       section('gaps', '검토 공백', [el('ul', { class: 'ledger-gaps' }, gaps.map(function (g) { return el('li', { text: g }); }))])
     ]);
   }
@@ -1718,7 +1752,8 @@
 
     var hasAnything = instruments.length || setpoints.length || logicSheets.length || drawings.length ||
       manualMentions.length || manualSearch.length || Object.keys(relatedDrawings).length ||
-      tagNote || tagAuto || valueConflicts.length || ledgerRecords(lookup).length;
+      tagNote || tagAuto || valueConflicts.length || ledgerRecords(lookup).length ||
+      (lookup && lookup.wiring && (lookup.wiring.records || []).length) || (lookup && lookup.doc_refs && (lookup.doc_refs.refs || []).length);
 
     if (!hasAnything && (result.failures || []).length) { renderPartial(result); return; }
     if (!hasAnything) {
