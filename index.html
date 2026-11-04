@@ -2393,22 +2393,19 @@
   // ── Session (server-signed token) ──
   function ensureCatalogSession() {
     if (catalogToken) return Promise.resolve();
-    // Re-use the existing client PIN hash — the server verifies independently
-    return sha256Hex(gateInput && gateInput._lastPin ? gateInput._lastPin : '')
-      .then(function (pinHash) {
-        // Try the already-verified session pin stored from gate
-        var storedPin = sessionStorage.getItem('tagsearch-gate-pin');
-        if (!storedPin) {
-          return showCatalogStatus('도면 자료실을 열려면 PIN 재입력이 필요합니다.', true);
-        }
-        return sha256Hex(storedPin);
-      })
-      .then(function (pinHash) {
-        if (!pinHash) return;
+    // Use the stored PIN hash (never the cleartext PIN).
+    // The hash was stored on gate unlock; it is the sha256 of the PIN.
+    var storedHash = null;
+    try { storedHash = sessionStorage.getItem('tagsearch-gate-pin-hash'); } catch (_) {}
+    if (!storedHash) {
+      return Promise.resolve(showCatalogStatus('도면 자료실을 열려면 PIN 재입력이 필요합니다.', true));
+    }
+    return Promise.resolve()
+      .then(function () {
         return fetch(CATALOG_BASE + '/catalog/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pin_hash: pinHash })
+          body: JSON.stringify({ pin_hash: storedHash })
         });
       })
       .then(function (res) {
@@ -2600,19 +2597,20 @@
     });
   }
 
-  // Store PIN on successful gate unlock (so catalog can use it for session)
-  // Patch gate: intercept successful SHA-256 match
+  // Store PIN hash on successful gate unlock (so catalog can use it for session).
+  // The PIN itself is never persisted — only its SHA-256 hash is stored.
   (function patchGatePin() {
     var origGateInput = document.getElementById('gateInput');
     if (!origGateInput) return;
     var origForm = document.getElementById('gateForm');
     if (!origForm) return;
-    // Listen on the form's submit to capture PIN before clearing
+    // Listen on the form's submit to capture hash before the field is cleared
     origForm.addEventListener('submit', function (e) {
       var val = origGateInput.value;
       sha256Hex(val).then(function (hash) {
         if (hash === GATE_HASH) {
-          try { sessionStorage.setItem('tagsearch-gate-pin', val); } catch (_) {}
+          // Store only the hash — never the plaintext PIN
+          try { sessionStorage.setItem('tagsearch-gate-pin-hash', hash); } catch (_) {}
         }
       });
     }, true); // capture phase — runs before existing handler clears the field
