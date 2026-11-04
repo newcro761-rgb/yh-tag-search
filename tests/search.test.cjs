@@ -3,24 +3,45 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 class Element {
-  constructor(tag='div') { this.tag=tag; this.children=[]; this.style={}; this.attrs={}; this.events={}; this.value=''; this.classList={add(){},remove(){}}; }
+  constructor(tag='div') { this.tag=tag; this.children=[]; this.style={}; this.attrs={}; this.events={}; this.value=''; this.classList={_cl:new Set(),add(c){this._cl.add(c);},remove(c){this._cl.delete(c);},toggle(c,v){v===undefined?this._cl.has(c)?this._cl.delete(c):this._cl.add(c):v?this._cl.add(c):this._cl.delete(c);},contains(c){return this._cl.has(c)}}; this.className=''; this._attrs={}; }
   appendChild(n){this.children.push(n);return n;}
   removeChild(n){this.children.splice(this.children.indexOf(n),1);}
   get firstChild(){return this.children[0];}
-  setAttribute(k,v){this.attrs[k]=v;}
-  getAttribute(k){return this.attrs[k];}
-  addEventListener(k,v){this.events[k]=v;}
+  setAttribute(k,v){this.attrs[k]=v;this._attrs[k]=v;if(k==='class')this.className=v;}
+  getAttribute(k){return this._attrs[k];}
+  addEventListener(k,v,cap){
+    const prev=this.events[k];
+    // Keep as callable function (for existing tests) but chain multiple
+    if(!prev){this.events[k]=v;}
+    else{const all=Array.isArray(prev)?[...prev,v]:[prev,v];this.events[k]=(...a)=>all.forEach(f=>f(...a));}
+  }
   focus(){}
+  removeAttribute(k){delete this._attrs[k];}
   get textContent(){return (this.text||'')+this.children.map(c=>c.textContent).join('');}
   set textContent(v){this.text=String(v);this.children=[];}
+  scrollIntoView(){}
 }
+class DocFragment extends Element{constructor(){super('#frag');}}
+function allNodes(root){return[root,...(root.children||[]).flatMap(allNodes)];}
 function app(){
- const nodes={};const doc={getElementById(id){return nodes[id] ||= new Element();},createElement:t=>new Element(t),createTextNode(t){const n=new Element('#text');n.textContent=t;return n;},documentElement:new Element()};
- const context={document:doc,sessionStorage:{getItem:()=> '1'},localStorage:{getItem:()=>null,setItem(){}},window:{matchMedia:()=>({matches:false})},location:{hash:''},console,setTimeout,clearTimeout,TextEncoder,navigator:{}};
+ const nodes={};
+ const doc={
+   getElementById(id){return nodes[id] ||= new Element();},
+   createElement:t=>new Element(t),
+   createTextNode(t){const n=new Element('#text');n.textContent=t;return n;},
+   createDocumentFragment(){return new DocFragment();},
+   documentElement:new Element(),
+   querySelectorAll(sel){
+     // Return catalog-filter buttons if asked
+     const all=Object.values(nodes);
+     return {forEach:fn=>{},length:0};
+   }
+ };
+ const context={document:doc,sessionStorage:{getItem:()=> '1'},localStorage:{getItem:()=>null,setItem(){}},window:{matchMedia:()=>({matches:false})},location:{hash:''},console,setTimeout,clearTimeout,TextEncoder,navigator:{},URLSearchParams:class{constructor(){this._p={};}set(k,v){this._p[k]=v;}toString(){return Object.entries(this._p).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');}},fetch:()=>Promise.resolve({ok:false,status:500,json:()=>Promise.resolve({})})};
  vm.createContext(context);
  const html=fs.readFileSync(require('node:path').join(__dirname,'../index.html'),'utf8');
  let source=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
- source=source.replace('  initFromHash();', `  globalThis.api = {parseSse,finalize,renderResults,renderBaseScan,runBaseTagScan,runSearch,logicPageUrl,doSearch, setTool(fn){callTool=fn;}};`);
+ source=source.replace('  initFromHash();', `  globalThis.api = {parseSse,finalize,renderResults,renderBaseScan,runBaseTagScan,runSearch,logicPageUrl,doSearch, setTool(fn){callTool=fn;},renderCatalogResults};`);
  vm.runInContext(source,context);
  return {api:context.api,nodes};
 }
