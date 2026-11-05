@@ -879,6 +879,20 @@
   </div>
 </div>
 
+<!-- ── 도면 자료실 PIN overlay (separate from front gate) ── -->
+<!-- catalog-auth-v2: separate PIN overlay, never reads tagsearch-gate-pin-hash -->
+<div class="gate" id="catalogGateScreen" hidden style="position:fixed; top:0; left:0; right:0; bottom:0; z-index:200; background:var(--bg);">
+  <div class="gate-card">
+    <h1>도면 자료실</h1>
+    <p>자료실 PIN을 입력하세요</p>
+    <form id="catalogGateForm">
+      <input id="catalogGateInput" type="password" autocomplete="current-password" inputmode="numeric" maxlength="12" aria-label="자료실 PIN 입력">
+      <button type="submit">확인</button>
+      <div class="gate-error" id="catalogGateError"></div>
+    </form>
+  </div>
+</div>
+
 <div class="app" id="appRoot" style="display:none">
   <div class="topbar">
     <!-- ── 탭 네비게이션 ── -->
@@ -2420,6 +2434,10 @@
   var catalogSearchForm  = document.getElementById('catalogSearchForm');
   var catalogSearchInput = document.getElementById('catalogSearchInput');
   var equipResults   = document.getElementById('equipResults');
+  var catalogGate     = document.getElementById('catalogGateScreen');
+  var catalogPinForm  = document.getElementById('catalogGateForm');
+  var catalogPinInput = document.getElementById('catalogGateInput');
+  var catalogPinError = document.getElementById('catalogGateError');
 
   // ── Tab switching ──
   function activateTab(tab) {
@@ -2440,7 +2458,7 @@
       paneCatalog.removeAttribute('hidden');
       paneTagSearch.setAttribute('hidden', '');
       paneEquipment.setAttribute('hidden', '');
-      // Auto-load on first visit
+      // Auto-load on first visit; show catalog PIN gate if no token
       if (catalogToken && catalogResults.children.length === 0) {
         loadCatalog(1);
       } else if (!catalogToken) {
@@ -2462,32 +2480,65 @@
   tabEquipment.addEventListener('click', function () { activateTab('equipment'); });
 
   // ── Session (server-signed token) ──
+  // Shows catalog PIN overlay, waits for user to type their separate catalog PIN,
+  // hashes it with SHA-256 client-side, POSTs hash to backend.
+  // Never reads tagsearch-gate-pin-hash — that is the front-gate key only.
+  var _catalogPinResolvers = [];  // queue of pending {resolve, reject}
+  function showCatalogGate() {
+    catalogGate.removeAttribute('hidden');  // show overlay
+    catalogPinInput.value = '';
+    catalogPinError.textContent = '';
+    catalogPinInput.focus();
+  }
+  function hideCatalogGate() {
+    catalogGate.setAttribute('hidden', '');
+  }
+
+  // Wire up the catalog PIN form once
+  catalogPinForm.addEventListener('submit', function(e) {
+    e.preventDefault();
+    var pin = catalogPinInput.value;
+    catalogPinError.textContent = '';
+    sha256Hex(pin).then(function(hash) {
+      return fetch(CATALOG_BASE + '/catalog/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin_hash: hash })
+      });
+    }).then(function(res) {
+      if (!res) throw new Error('no response');
+      if (!res.ok) {
+        catalogPinError.textContent = '인증 실패 — PIN을 확인하세요.';
+        catalogPinInput.value = '';
+        catalogPinInput.focus();
+        // notify all waiting callers of failure (keep overlay open for retry)
+        return;
+      }
+      return res.json().then(function(data) {
+        if (data && data.token) {
+          catalogToken = data.token;
+          hideCatalogGate();
+          // resolve all pending callers
+          var q = _catalogPinResolvers.slice();
+          _catalogPinResolvers.length = 0;
+          q.forEach(function(r) { r.resolve(); });
+        } else {
+          catalogPinError.textContent = '서버 오류 — 토큰이 없습니다.';
+        }
+      });
+    }).catch(function(err) {
+      catalogPinError.textContent = '서버 연결 실패: ' + (err.message || '');
+      // keep overlay open for retry
+    });
+  });
+
   function ensureCatalogSession() {
     if (catalogToken) return Promise.resolve();
-    // Use the stored PIN hash (never the cleartext PIN).
-    // The hash was stored on gate unlock; it is the sha256 of the PIN.
-    var storedHash = null;
-    try { storedHash = sessionStorage.getItem('tagsearch-gate-pin-hash'); } catch (_) {}
-    if (!storedHash) {
-      return Promise.resolve(showCatalogStatus('도면 자료실을 열려면 PIN 재입력이 필요합니다.', true));
-    }
-    return Promise.resolve()
-      .then(function () {
-        return fetch(CATALOG_BASE + '/catalog/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pin_hash: storedHash })
-        });
-      })
-      .then(function (res) {
-        if (!res) return;
-        if (!res.ok) { showCatalogStatus('인증 실패 — PIN을 확인하세요.', true); return; }
-        return res.json();
-      })
-      .then(function (data) {
-        if (data && data.token) { catalogToken = data.token; }
-      })
-      .catch(function (e) { showCatalogStatus('서버 연결 실패: ' + e.message, true); });
+    // Show PIN overlay; return a promise that resolves when token is obtained
+    showCatalogGate();
+    return new Promise(function(resolve, reject) {
+      _catalogPinResolvers.push({ resolve: resolve, reject: reject });
+    });
   }
 
   // ── Discipline label helper ──
