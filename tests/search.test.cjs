@@ -41,7 +41,7 @@ function app(){
  vm.createContext(context);
  const html=fs.readFileSync(require('node:path').join(__dirname,'../index.html'),'utf8');
  let source=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
- source=source.replace('  initFromHash();', `  globalThis.api = {parseSse,finalize,renderResults,renderBaseScan,runBaseTagScan,runSearch,logicPageUrl,doSearch, setTool(fn){callTool=fn;},renderCatalogResults};`);
+ source=source.replace('  initFromHash();', `  globalThis.api = {parseSse,finalize,renderResults,renderBaseScan,runBaseTagScan,runSearch,logicPageUrl,doSearch,generateVariants, setTool(fn){callTool=fn;},renderCatalogResults};`);
  vm.runInContext(source,context);
  return {api:context.api,nodes};
 }
@@ -114,6 +114,16 @@ test('embedded raster drawings render safe preview, keyboard zoom and candidate 
 });
 
 const envelope = data=>JSON.stringify({result:{content:[{type:'text',text:JSON.stringify(data)}]}});
+test('workbook fields, unresolved groups and raw columns remain source-specific and safe',()=>{
+ const {api,nodes}=app();
+ const record={tag:'ZZ-PT01(A,B)',raw_tag:'ZZ-PT-01(A,B)',is_grouped:true,tag_resolution:'unresolved_group',source:{file:'fixture.xlsx',sheet:'Stock',row:8,sha256:'fixture-hash'},setpoints:0,accessories:'Fixture accessory',location:'Fixture location',panel_no:'Fixture panel',drawing_reference_prefix:'99999-J-',stock_snapshot:0,stock_as_of:'2020-01-01',storage:'Fixture shelf',storage_kind:'workshop_storage',source_columns:{A:0,B:null,C:'<script>bad()</script>'},source_column_labels:{A:'Quantity',B:'Missing',C:'Notes'}};
+ api.renderResults({rawInput:'ZZ-PT01(A,B)',lookup:{...emptyLookup,equipment_ledger:{records:[record]}},logicSheets:[],drawings:[],gen:{variants:[]},callLog:[]});
+ const ledger=nodes.results.children[0], text=ledger.textContent;
+ for(const value of ['원문 태그','설정값 (목록 원문)','Fixture accessory','Fixture location','Fixture panel','완전한 도면번호 아님','개별 태그로 확장하지 않았','2020-01-01','작업실 보관, JB 아님','원본 열 전체 보기','fixture-hash','A · Quantity','B · Missing','<script>bad()</script>']) assert.ok(text.includes(value),value);
+ assert.ok(tree(ledger).some(n=>n.tag==='dd' && n.text==='0'));
+ assert.ok(tree(ledger).every(n=>n.tag!=='script'));
+ assert.equal(api.generateVariants('ZZ-PT-01-A').forLookup,'ZZ-PT-01-A');
+});
 const emptyLookup={usages:[],field_instruments:[]};
 function tree(n){return [n,...n.children.flatMap(tree)];}
 test('MCP errors and malformed payloads never become empty results',()=>{

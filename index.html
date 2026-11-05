@@ -1906,9 +1906,17 @@
     function section(id, title, children) { return el('section', { id: 'ledger-' + id, class: 'ledger-section', 'aria-labelledby': 'ledger-title-' + id }, [el('h3', { id: 'ledger-title-' + id, text: title })].concat(children)); }
     var specs = [];
     records.forEach(function (r, i) {
+      var extra = [['원문 태그', r.raw_tag], ['설치위치 (원문)', r.location], ['패널 번호 (원문)', r.panel_no], ['레인지', r.range], ['설정값 (목록 원문)', r.setpoints], ['부속품 (원문)', r.accessories], ['교정일자 (원문)', r.calibration_date], ['연결 참조 (원문)', r.connection_reference], ['도면 접두어 (완전한 도면번호 아님)', r.drawing_reference_prefix]];
+      var columns = r.source_columns && typeof r.source_columns === 'object' && !Array.isArray(r.source_columns) ? r.source_columns : null;
+      var labels = r.source_column_labels && typeof r.source_column_labels === 'object' ? r.source_column_labels : {};
       specs.push(el('div', { class: 'ledger-record' }, [
         el('h4', { text: (ledgerText(r.tag) || '태그 미확인') + ' · 대장 원문 ' + (i + 1) }),
-        facts([['주요 사양', r.specification], ['자재번호', r.material_no], ['용도', r.service], ['제조사', r.manufacturer], ['모델', r.model], ['도면번호', r.drawing_no]]), sourceLine(r.source)
+        facts([['주요 사양', r.specification], ['자재번호', r.material_no], ['용도', r.service], ['제조사', r.manufacturer], ['모델', r.model], ['도면번호', r.drawing_no]].concat(extra.filter(function (p) { return ledgerText(p[1]); }))), sourceLine(r.source),
+        r.is_grouped || (r.tag_resolution && r.tag_resolution !== 'single') ? paragraph('태그 묶음·불완전 식별자 원문입니다. 개별 태그로 확장하지 않았으며 개별 설비 적용은 미확인입니다.', 'ledger-caution') : null,
+        ledgerText(r.evidence_notice) ? paragraph(ledgerText(r.evidence_notice)) : null,
+        columns ? el('details', { class: 'ledger-zoom' }, [el('summary', { text: '원본 열 전체 보기 · 빈 값 포함' }),
+          facts(Object.keys(columns).map(function (c) { return [c + ' · ' + (ledgerText(labels[c]) || c), columns[c]]; })),
+          paragraph('원본 SHA-256: ' + (ledgerText(r.source && r.source.sha256) || '미확보'), 'ledger-source')]) : null
       ]));
     });
     instruments.forEach(function (fi) {
@@ -2000,11 +2008,12 @@
         }))]);
     });
     var docCount = function (c) { return (docGroups[c] || []).length; };
-    var inventory = [paragraph('과거 재고 스냅샷 · 기준일 미확인. 현재 재고가 아닙니다. 구매 수량을 현재 재고나 사용 가능 수량으로 해석하지 마세요.', 'ledger-caution')];
+    var hasStockDate = records.some(function (r) { return ledgerText(r.stock_as_of); });
+    var inventory = [paragraph('과거 재고 스냅샷 · ' + (hasStockDate ? '기준일은 출처별 표시를 확인하세요.' : '기준일 미확인.') + ' 현재 재고가 아닙니다. 구매 수량을 현재 재고나 사용 가능 수량으로 해석하지 마세요.', 'ledger-caution')];
     (records.length ? records : [{}]).forEach(function (r, i) {
       inventory.push(el('div', { class: 'ledger-record' }, [
         records.length ? el('h4', { text: (ledgerText(r.tag) || '태그 미확인') + ' · 대장 원문 ' + (i + 1) }) : null,
-        facts([['과거 재고 기록', r.stock_snapshot], ['보관 위치', r.storage], ['대장 비고 (정비 확정 아님)', r.notes], ['확인된 정비 이력', null]]),
+        facts([['과거 재고 기록', r.stock_snapshot], ['스냅샷 기준일 (파일명 기준)', r.stock_as_of], ['보관 위치' + (r.storage_kind === 'workshop_storage' ? ' (작업실 보관, JB 아님)' : ''), r.storage], ['대장 비고 (정비 확정 아님)', r.notes], ['확인된 정비 이력', null]]),
         paragraph('구매 기록: ' + (Array.isArray(r.purchases) && r.purchases.length ? r.purchases.filter(function (p) { return p && typeof p === 'object'; }).map(function (p) { return (ledgerText(p.year) || '미확인') + '년 · ' + (ledgerText(p.quantity) || '미확인'); }).join(' / ') || '미확인' : '미확인')),
         sourceLine(r.source)
       ]));
