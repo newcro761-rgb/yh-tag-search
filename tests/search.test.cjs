@@ -37,7 +37,7 @@ function app(){
      return {forEach:fn=>{},length:0};
    }
  };
- const context={document:doc,sessionStorage:{getItem:()=> '1'},localStorage:{getItem:()=>null,setItem(){}},window:{matchMedia:()=>({matches:false})},location:{hash:''},console,setTimeout,clearTimeout,TextEncoder,navigator:{},URLSearchParams:class{constructor(){this._p={};}set(k,v){this._p[k]=v;}toString(){return Object.entries(this._p).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');}},fetch:()=>Promise.resolve({ok:false,status:500,json:()=>Promise.resolve({})})};
+ const context={document:doc,sessionStorage:{getItem:(k)=>k==='tagsearch-catalog-token'?'catalog.9999999999999.mock':'1',setItem(){}},localStorage:{getItem:()=>null,setItem(){}},window:{matchMedia:()=>({matches:false})},location:{hash:''},console,setTimeout,clearTimeout,TextEncoder,navigator:{},URLSearchParams:class{constructor(){this._p={};}set(k,v){this._p[k]=v;}toString(){return Object.entries(this._p).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');}},fetch:()=>Promise.resolve({ok:false,status:500,json:()=>Promise.resolve({})})};
  vm.createContext(context);
  const html=fs.readFileSync(require('node:path').join(__dirname,'../index.html'),'utf8');
  let source=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];

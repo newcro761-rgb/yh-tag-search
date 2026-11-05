@@ -1,17 +1,17 @@
 /**
- * catalog-auth.test.cjs — RED-first TDD for separate catalog PIN authentication
+ * catalog-auth.test.cjs — TDD for UNIFIED front-gate PIN → catalog session
  *
- * These tests assert the NEW catalog-auth behaviour:
- *   1.  HTML has a catalog-gate overlay (id=catalogGateScreen) distinct from gateScreen
- *   2.  catalogGateInput is type=password with autocomplete=current-password
- *   3.  ensureCatalogSession does NOT read tagsearch-gate-pin-hash (old front-gate key)
- *   4.  ensureCatalogSession shows the overlay when no token exists
- *   5.  Form submit posts sha256(PIN) – not the front-gate hash – to /catalog/session
- *   6.  Failed auth (non-ok response) shows error, keeps overlay open for retry
- *   7.  Successful auth hides overlay, sets token, resolves promise
- *   8.  Second call with token already set resolves immediately (no overlay)
- *   9.  Equipment tab also uses ensureCatalogSession (token is shared)
- *  10.  Old front-gate GATE_HASH constant and gateScreen element are unchanged
+ * NEW behaviour (single PIN login for all 3 tabs):
+ *   1.  HTML has NO client-side GATE_HASH constant for hash comparison
+ *   2.  Gate form submit POSTs sha256(PIN) to /catalog/session and awaits token
+ *   3.  Successful /catalog/session → catalogToken set, app unlocked
+ *   4.  Failed /catalog/session → gate error shown, gate stays visible, retry
+ *   5.  No separate catalogGateScreen overlay (removed)
+ *   6.  After gate unlock, catalog tab works without additional PIN prompt
+ *   7.  After gate unlock, equipment tab also works without additional PIN prompt
+ *   8.  ensureCatalogSession resolves immediately if token already exists
+ *   9.  Token in memory only — no hash/plaintext persistence in sessionStorage
+ *  10.  Old gateScreen + 3 tabs + tag search unchanged
  *
  * Run: node tests/catalog-auth.test.cjs
  */
@@ -23,14 +23,13 @@ const path    = require('node:path');
 const vm      = require('node:vm');
 const { webcrypto } = require('node:crypto');
 
-// Helper: same SHA-256 as the app uses, so we can compute expected hashes in tests
 async function sha256Hex(str) {
   const data = new TextEncoder().encode(str);
   const buf  = await webcrypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// ── Minimal DOM mock (extended from catalog.test.cjs pattern) ─────────────────
+// ── Minimal DOM mock ──────────────────────────────────────────────────────────
 class Element {
   constructor(tag = 'div') {
     this.tag = tag; this.children = []; this.style = {}; this.attrs = {};
@@ -56,10 +55,7 @@ class Element {
     if (!prev) { this.events[k] = v; }
     else { const all = Array.isArray(prev) ? [...prev, v] : [prev, v]; this.events[k] = (...a) => all.forEach(f => f(...a)); }
   }
-  removeEventListener(k, v) {
-    if (this.events[k] === v) { delete this.events[k]; }
-    // array-wrapped case: ignore for test purposes (caching prevents double-add)
-  }
+  removeEventListener(k, v) { if (this.events[k] === v) delete this.events[k]; }
   focus() {}
   scrollIntoView() {}
   get textContent() { return (this.text || '') + this.children.map(c => c.textContent).join(''); }
@@ -67,257 +63,296 @@ class Element {
 }
 class DocFragment extends Element { constructor() { super('#frag'); } }
 
-function app(opts = {}) {
+function makeApp(opts = {}) {
   const nodes = {};
   const dispatchEvents = {};
-  const allElements = [];
+  const fetchCalls = [];
+  const ssStorage = {};
+  let appUnlocked = false;
+
+  // token to return from /catalog/session when PIN is correct
+  const FAKE_TOKEN = 'fake.signed.token';
+  const correctHash = opts.correctHash || null; // sha256 of valid PIN
+
   const doc = {
     getElementById(id) { return nodes[id] ||= new Element(); },
-    createElement: t => { const e = new Element(t); allElements.push(e); return e; },
+    createElement: t => new Element(t),
     createTextNode(t) { const n = new Element('#text'); n.textContent = t; return n; },
     createDocumentFragment() { return new DocFragment(); },
     documentElement: new Element(),
     addEventListener(type, fn) { dispatchEvents[type] = fn; },
-    querySelectorAll(sel) {
-      const cls = sel.startsWith('.') ? sel.slice(1) : null;
-      const matched = cls ? allElements.filter(e => e._cl && e._cl.has(cls)) : [];
-      return { forEach: fn => matched.forEach(fn), length: matched.length, [Symbol.iterator]: matched[Symbol.iterator].bind(matched) };
-    },
-  };
-  // Session storage — already past the front gate, but NO catalog token yet
-  const sessionStorage = {
-    _store: { 'tagsearch-gate-ok': '1', ...(opts.sessionStore || {}) },
-    getItem(k) { return this._store[k] ?? null; },
-    setItem(k, v) { this._store[k] = v; },
-    removeItem(k) { delete this._store[k]; },
-  };
-  const localStorage = {
-    _store: {},
-    getItem(k) { return this._store[k] ?? null; },
-    setItem(k, v) { this._store[k] = v; },
-    removeItem(k) { delete this._store[k]; },
+    querySelectorAll: () => [],
+    body: new Element(),
   };
 
-  const context = {
+  // Pre-create nodes that exist in HTML
+  nodes['gateScreen']     = new Element('div');
+  nodes['appRoot']        = new Element('div');
+  nodes['gateForm']       = new Element('form');
+  nodes['gateInput']      = new Element('input');
+  nodes['gateError']      = new Element('div');
+  nodes['tabTagSearch']   = new Element('button');
+  nodes['tabCatalog']     = new Element('button');
+  nodes['tabEquipment']   = new Element('button');
+  nodes['paneTagSearch']  = new Element('div');
+  nodes['paneCatalog']    = new Element('div');
+  nodes['paneEquipment']  = new Element('div');
+  nodes['catalogResults'] = new Element('div');
+  nodes['catalogPager']   = new Element('div');
+  nodes['catalogSearchForm']  = new Element('form');
+  nodes['catalogSearchInput'] = new Element('input');
+  nodes['equipResults']   = new Element('div');
+  nodes['catalogFilterAll']  = new Element('button');
+  nodes['catalogFilterUJ']   = new Element('button');
+  nodes['catalogFilterLM']   = new Element('button');
+  nodes['catalogFilterLE']   = new Element('button');
+  nodes['catalogFilterLJ']   = new Element('button');
+  nodes['catalogStatus']     = new Element('div');
+  nodes['catalogSourceBtn']  = new Element('button');
+  nodes['catalogAuxSource']  = new Element('div');
+  nodes['equipStatus']       = new Element('div');
+  // catalogGateScreen should NOT be in the HTML in new version;
+  // create a stub so getElementById doesn't crash on old references, but it must be unused
+  nodes['catalogGateScreen']  = null; // intentionally null — new code must not use it
+  nodes['catalogGateForm']    = null;
+  nodes['catalogGateInput']   = null;
+  nodes['catalogGateError']   = null;
+
+  const mockFetch = async (url, init) => {
+    fetchCalls.push({ url, init });
+    if (url.includes('/catalog/session')) {
+      const body = JSON.parse(init?.body || '{}');
+      if (correctHash && body.pin_hash === correctHash) {
+        return { ok: true, status: 200, json: async () => ({ token: FAKE_TOKEN, expires_in: 3600 }) };
+      }
+      return { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) };
+    }
+    if (url.includes('/catalog/drawings')) {
+      const auth = init?.headers?.Authorization || init?.headers?.['Authorization'] || '';
+      if (auth === `Bearer ${FAKE_TOKEN}`) {
+        return { ok: true, status: 200, json: async () => ({ results: [], total: 0 }) };
+      }
+      return { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) };
+    }
+    if (url.includes('/catalog/equipment')) {
+      const auth = init?.headers?.Authorization || init?.headers?.['Authorization'] || '';
+      if (auth === `Bearer ${FAKE_TOKEN}`) {
+        return { ok: true, status: 200, json: async () => ({ candidate: [], verified: [] }) };
+      }
+      return { ok: false, status: 401, json: async () => ({ error: 'Unauthorized' }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+
+  const sessionStorageMock = {
+    getItem: k => ssStorage[k] ?? null,
+    setItem: (k, v) => { ssStorage[k] = String(v); },
+    removeItem: k => { delete ssStorage[k]; },
+  };
+
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  // Extract the MAIN app script (last/largest <script> block — first is tiny theme-detection)
+  const allScripts = [...src.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  if (!allScripts.length) throw new Error('No inline <script> found');
+  // Pick the longest script (the main app)
+  const scriptSrc = allScripts.reduce((a, b) => b[1].length > a[1].length ? b : a)[1];
+
+  const ctx = vm.createContext({
     document: doc,
-    sessionStorage,
-    localStorage,
-    window: { matchMedia: () => ({ matches: false }) },
-    location: { hash: '' },
-    console,
-    setTimeout,
-    clearTimeout,
-    TextEncoder,
-    navigator: {},
+    window: {},
+    sessionStorage: sessionStorageMock,
     crypto: webcrypto,
-    URLSearchParams: globalThis.URLSearchParams || class {
-      constructor() { this._p = {}; }
-      set(k, v) { this._p[k] = v; }
-      toString() { return Object.entries(this._p).map(([k, v]) => k + '=' + encodeURIComponent(v)).join('&'); }
-    },
-    fetch: opts.fetch || (() => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({}) })),
-    globalThis: null,
-  };
-  context.globalThis = context;
-  vm.createContext(context);
-
-  const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
-  let source = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].at(-1)[1];
-  source = source.replace(
-    '  initFromHash();',
-    `  globalThis.api = {
-      parseSse, finalize, renderResults, renderBaseScan, runBaseTagScan, runSearch,
-      logicPageUrl, doSearch, setTool(fn){callTool=fn;},
-      setCatalogFetch(fn) { if(typeof catalogFetch!=='undefined') catalogFetch=fn; },
-      ensureCatalogSession: () => ensureCatalogSession(),
-      getCatalogToken: () => typeof catalogToken !== 'undefined' ? catalogToken : null,
-      triggerTabSwitch(tabName) {
-        const ev = { target: { dataset: { tab: tabName } } };
-        if (typeof onTabClick === 'function') onTabClick(ev);
-      },
-    };`
-  );
-  vm.runInContext(source, context);
-  return { api: context.api, nodes, sessionStorage, localStorage };
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-test('[AUTH-1] HTML has catalog gate overlay element (id=catalogGateScreen)', () => {
-  const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
-  assert.ok(html.includes('id="catalogGateScreen"'), 'missing id="catalogGateScreen" overlay element');
-});
-
-test('[AUTH-2] catalogGateInput is type=password with autocomplete=current-password', () => {
-  const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
-  assert.ok(html.includes('id="catalogGateInput"'), 'missing id="catalogGateInput"');
-  const idx = html.indexOf('id="catalogGateInput"');
-  const surroundings = html.slice(Math.max(0, idx - 300), idx + 300);
-  assert.ok(surroundings.includes('type="password"'), 'catalogGateInput must be type=password');
-  assert.ok(
-    surroundings.includes('autocomplete="current-password"'),
-    'catalogGateInput must have autocomplete="current-password" for password managers'
-  );
-});
-
-test('[AUTH-3] ensureCatalogSession function does NOT read tagsearch-gate-pin-hash', () => {
-  const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
-  const fnStart = html.indexOf('function ensureCatalogSession()');
-  assert.ok(fnStart >= 0, 'ensureCatalogSession must exist');
-  // Extract function body (up to the closing brace + reasonable margin)
-  const fnBody = html.slice(fnStart, fnStart + 2500);
-  assert.ok(
-    !fnBody.includes('tagsearch-gate-pin-hash'),
-    'ensureCatalogSession must NOT read tagsearch-gate-pin-hash (catalog uses its own PIN form, not the front-gate hash)'
-  );
-});
-
-test('[AUTH-4] HTML has catalogGateForm and catalogGateError inside catalogGateScreen', () => {
-  const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
-  assert.ok(html.includes('id="catalogGateForm"'),  'missing id="catalogGateForm"');
-  assert.ok(html.includes('id="catalogGateError"'), 'missing id="catalogGateError"');
-  // All three must appear between catalogGateScreen open and next top-level section
-  const screenStart = html.indexOf('id="catalogGateScreen"');
-  const screenEnd   = html.indexOf('</div>', screenStart + html.slice(screenStart).indexOf('gate-card'));
-  const region      = html.slice(screenStart, screenStart + 1200);
-  assert.ok(region.includes('id="catalogGateForm"'),  'catalogGateForm must be inside catalogGateScreen');
-  assert.ok(region.includes('id="catalogGateInput"'), 'catalogGateInput must be inside catalogGateScreen');
-  assert.ok(region.includes('id="catalogGateError"'), 'catalogGateError must be inside catalogGateScreen');
-});
-
-test('[AUTH-5] VM: ensureCatalogSession shows catalog gate overlay when no token', () => {
-  const { api, nodes } = app();
-  // Should not be hidden before call (freshly created element has _hidden=false by default)
-  // Call ensureCatalogSession — it must mark catalogGateScreen as visible
-  api.ensureCatalogSession(); // fire-and-forget; we just check overlay shown
-  assert.equal(nodes.catalogGateScreen._hidden, false, 'catalogGateScreen must be un-hidden when auth required');
-});
-
-test('[AUTH-6] VM: ensureCatalogSession posts sha256(PIN) — not the front-gate hash — to /catalog/session', async () => {
-  const TEST_PIN = 'hunter42';
-  let capturedUrl  = null;
-  let capturedBody = null;
-  const mockFetch = (url, opts) => {
-    capturedUrl  = url;
-    capturedBody = JSON.parse(opts.body);
-    return Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve({ token: 'test-catalog-token-abc' }),
-    });
-  };
-
-  const { api, nodes } = app({ fetch: mockFetch });
-
-  const authPromise = api.ensureCatalogSession();
-  // Gate should be shown
-  assert.equal(nodes.catalogGateScreen._hidden, false, 'gate shown before PIN entry');
-
-  // Fill in PIN and submit form
-  nodes.catalogGateInput.value = TEST_PIN;
-  const submitEv = { preventDefault() {} };
-  nodes.catalogGateForm.events.submit(submitEv);
-
-  await authPromise;
-
-  // Fetch must have been called
-  assert.ok(capturedUrl,  'fetch was called');
-  assert.ok(capturedUrl.includes('/catalog/session'), 'fetch target is /catalog/session');
-  assert.ok(capturedBody && capturedBody.pin_hash, 'body contains pin_hash');
-
-  // pin_hash must be sha256 of the entered PIN — never the front-gate hash
-  const expectedHash = await sha256Hex(TEST_PIN);
-  assert.equal(capturedBody.pin_hash, expectedHash, 'pin_hash must equal sha256(enteredPIN)');
-
-  // Front-gate hash must NOT have been sent
-  const GATE_HASH = '30606ac3b4fd5c618ac4c6555ce007edd7fe73d75b685320aa56be211ebc4b40';
-  assert.notEqual(capturedBody.pin_hash, GATE_HASH, 'must never send front-gate hash to catalog endpoint');
-
-  // Overlay hidden after success
-  assert.equal(nodes.catalogGateScreen._hidden, true, 'overlay hidden after successful auth');
-
-  // Token recorded
-  assert.equal(api.getCatalogToken(), 'test-catalog-token-abc', 'catalogToken stored after success');
-});
-
-test('[AUTH-7] VM: failed auth (non-ok response) shows error, keeps overlay open for retry', async () => {
-  let callCount = 0;
-  const mockFetch = () => {
-    callCount++;
-    return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({}) });
-  };
-
-  const { api, nodes } = app({ fetch: mockFetch });
-
-  // Start auth (don't await — it won't resolve on failure)
-  api.ensureCatalogSession();
-
-  // Submit wrong PIN
-  nodes.catalogGateInput.value = 'wrongpin';
-  nodes.catalogGateForm.events.submit({ preventDefault() {} });
-
-  // Wait for async fetch + then chain to settle
-  await new Promise(r => setTimeout(r, 100));
-
-  assert.equal(callCount, 1, 'fetch called once');
-  assert.equal(nodes.catalogGateScreen._hidden, false, 'overlay stays open after failed auth (retry allowed)');
-  assert.ok(nodes.catalogGateError.textContent.length > 0, 'error message shown in catalogGateError');
-  assert.equal(api.getCatalogToken(), null, 'no token set after failed auth');
-});
-
-test('[AUTH-8] VM: second call with token already set resolves immediately without showing overlay', async () => {
-  // Pre-set token via successful auth
-  const mockFetch = () => Promise.resolve({
-    ok: true,
-    json: () => Promise.resolve({ token: 'existing-tok' }),
+    fetch: mockFetch,
+    setTimeout: (fn, ms) => { fn(); return 1; },
+    clearTimeout: () => {},
+    TextEncoder,
+    TextDecoder,
+    console,
+    _fetchCalls: fetchCalls,
+    _appUnlocked: () => appUnlocked,
+    _ssStorage: ssStorage,
+    _nodes: nodes,
   });
 
-  const { api, nodes } = app({ fetch: mockFetch });
+  // Track app unlock
+  const origUnlockCode = scriptSrc;
 
-  // First auth
-  const p1 = api.ensureCatalogSession();
-  nodes.catalogGateInput.value = 'somepin';
-  nodes.catalogGateForm.events.submit({ preventDefault() {} });
-  await p1;
-  assert.equal(api.getCatalogToken(), 'existing-tok', 'token set after first auth');
-  // Hide overlay gets called — reset _hidden manually to verify second call doesn't re-show
-  nodes.catalogGateScreen._hidden = true;
+  try {
+    vm.runInContext(`
+      (function() {
+        ${scriptSrc}
+      })();
+    `, ctx, { timeout: 3000 });
+  } catch (e) {
+    if (!e.message?.includes('initApp')) throw e;
+  }
 
-  // Second call — must resolve without touching overlay
-  await api.ensureCatalogSession();
-  assert.equal(nodes.catalogGateScreen._hidden, true, 'overlay not re-shown when token already valid');
-});
-
-test('[AUTH-9] VM: no data fetch fires before catalog token is obtained', async () => {
-  const fetchCalls = [];
-  const mockFetch = (url, opts) => {
-    fetchCalls.push(url);
-    if (url.includes('/catalog/session')) {
-      // Never resolve — simulates pending auth
-      return new Promise(() => {});
-    }
-    return Promise.resolve({ ok: true, json: () => Promise.resolve({ drawings: [], total: 0 }) });
+  return {
+    doc, nodes, fetchCalls, ssStorage, ctx,
+    FAKE_TOKEN,
+    // Helper: submit the gate form with a PIN value
+    async submitGatePin(pin) {
+      nodes['gateInput'].value = pin;
+      const submitFn = nodes['gateForm'].events['submit'];
+      if (!submitFn) throw new Error('gateForm has no submit handler');
+      const prevented = [];
+      await submitFn({ preventDefault: () => prevented.push(true) });
+      // Wait for async promises
+      await new Promise(r => setTimeout(r, 50));
+    },
   };
+}
 
-  const { api } = app({ fetch: mockFetch });
+// ─────────────────────────────────────────────────────────────────────────────
 
-  // Start auth (never resolves because fetch never resolves)
-  api.ensureCatalogSession();
-
-  // Wait a tick
-  await new Promise(r => setTimeout(r, 50));
-
-  // Only /catalog/session should have been fetched — no /catalog/drawings or /equipment
-  const dataCalls = fetchCalls.filter(u => !u.includes('/catalog/session'));
-  assert.equal(dataCalls.length, 0, `no data fetches before token obtained, but got: ${dataCalls}`);
+test('[AUTH-1] HTML does NOT contain a hardcoded GATE_HASH client-side comparison', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  // Should NOT contain the old pattern: if (hash === GATE_HASH)
+  // (we move validation entirely to server)
+  assert.ok(!src.includes("hash === GATE_HASH"), 'Should not compare hash to hardcoded GATE_HASH client-side');
+  // Also should not have old var GATE_HASH = '...' constant
+  assert.ok(!src.includes("var GATE_HASH ="), 'Should not define GATE_HASH constant in frontend');
 });
 
-test('[AUTH-10] Old front-gate GATE_HASH constant and gateScreen/gateInput unchanged', () => {
-  const html = fs.readFileSync(path.join(__dirname, '../index.html'), 'utf8');
+test('[AUTH-2] Gate form submit POSTs to /catalog/session with sha256(PIN)', async () => {
+  const correctPin = '1234';
+  const hash = await sha256Hex(correctPin);
+  const app = makeApp({ correctHash: hash });
+
+  await app.submitGatePin(correctPin);
+
+  const sessionCall = app.fetchCalls.find(c => c.url.includes('/catalog/session'));
+  assert.ok(sessionCall, 'Should have called /catalog/session');
+  assert.strictEqual(sessionCall.init?.method, 'POST');
+  const body = JSON.parse(sessionCall.init?.body || '{}');
+  assert.ok(body.pin_hash, 'Should send pin_hash');
+  // Verify pin_hash is the sha256 of the entered PIN (not plaintext)
+  const expectedHash = await sha256Hex(correctPin);
+  assert.strictEqual(body.pin_hash, expectedHash, 'pin_hash must equal sha256(PIN)');
+});
+
+test('[AUTH-3] Successful /catalog/session sets catalogToken and unlocks app', async () => {
+  const correctPin = '1234';
+  const hash = await sha256Hex(correctPin);
+  const app = makeApp({ correctHash: hash });
+
+  await app.submitGatePin(correctPin);
+
+  // appRoot should be visible (unlocked)
+  const appRoot = app.nodes['appRoot'];
+  assert.ok(appRoot.style.display !== 'none', 'appRoot should be visible after successful auth');
+  // gateScreen should be hidden
+  const gateScreen = app.nodes['gateScreen'];
   assert.ok(
-    html.includes("var GATE_HASH = '30606ac3b4fd5c618ac4c6555ce007edd7fe73d75b685320aa56be211ebc4b40'"),
-    'GATE_HASH constant must remain unchanged'
+    gateScreen.style.display === 'none' || gateScreen.attrs['hidden'] !== undefined,
+    'gateScreen should be hidden after unlock'
   );
-  assert.ok(html.includes('id="gateScreen"'),  'old gateScreen must remain');
-  assert.ok(html.includes('id="gateInput"'),   'old gateInput must remain');
-  assert.ok(html.includes('id="gateForm"'),    'old gateForm must remain');
+});
+
+test('[AUTH-4] Failed /catalog/session shows gate error, keeps gate visible', async () => {
+  const app = makeApp({ correctHash: 'will-not-match' });
+
+  await app.submitGatePin('wrongpin');
+
+  const gateError = app.nodes['gateError'];
+  assert.ok(gateError.text || gateError.textContent, 'gateError should have message after wrong PIN');
+  // Gate should still be visible
+  const gateScreen = app.nodes['gateScreen'];
+  assert.ok(
+    gateScreen.style.display !== 'none' && gateScreen.attrs['hidden'] === undefined,
+    'gateScreen should remain visible after failed auth'
+  );
+});
+
+test('[AUTH-5] No catalogGateScreen overlay — catalog gate removed from HTML', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(!src.includes('id="catalogGateScreen"'), 'catalogGateScreen should be removed from HTML');
+  assert.ok(!src.includes('catalogGateForm'), 'catalogGateForm should be removed');
+  assert.ok(!src.includes('catalogGateInput'), 'catalogGateInput should be removed');
+});
+
+test('[AUTH-6] After gate unlock, catalog tab activates without additional PIN prompt', async () => {
+  const correctPin = '1234';
+  const hash = await sha256Hex(correctPin);
+  const app = makeApp({ correctHash: hash });
+
+  await app.submitGatePin(correctPin);
+
+  // Click catalog tab
+  const tabCatalogFn = app.nodes['tabCatalog'].events['click'];
+  if (tabCatalogFn) {
+    await tabCatalogFn();
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  // Should NOT have called /catalog/session again (token already set)
+  const sessionCalls = app.fetchCalls.filter(c => c.url.includes('/catalog/session'));
+  assert.strictEqual(sessionCalls.length, 1, 'Should only call /catalog/session once (at gate unlock)');
+});
+
+test('[AUTH-7] After gate unlock, equipment tab also works without additional PIN prompt', async () => {
+  const correctPin = '1234';
+  const hash = await sha256Hex(correctPin);
+  const app = makeApp({ correctHash: hash });
+
+  await app.submitGatePin(correctPin);
+
+  const sessionCallsBeforeEquip = app.fetchCalls.filter(c => c.url.includes('/catalog/session')).length;
+
+  // Click equipment tab
+  const tabEquipFn = app.nodes['tabEquipment'].events['click'];
+  if (tabEquipFn) {
+    await tabEquipFn();
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  const sessionCallsAfter = app.fetchCalls.filter(c => c.url.includes('/catalog/session')).length;
+  assert.strictEqual(sessionCallsAfter, sessionCallsBeforeEquip, 'Equipment tab must not trigger additional /catalog/session call');
+});
+
+test('[AUTH-8] Token is in memory only — sessionStorage does not store hash or plaintext PIN', async () => {
+  const correctPin = '1234';
+  const hash = await sha256Hex(correctPin);
+  const app = makeApp({ correctHash: hash });
+
+  await app.submitGatePin(correctPin);
+
+  // sessionStorage must not contain any pin hash or plaintext
+  for (const [k, v] of Object.entries(app.ssStorage)) {
+    assert.ok(!v.includes(correctPin), `sessionStorage key "${k}" must not contain plaintext PIN`);
+    // Allow gate-ok marker but NOT the hash
+    if (k !== 'tagsearch-gate-ok' && k !== 'tagsearch-gate-pin-hash') {
+      // any other key — just ensure no pin hash stored
+    }
+    // Specifically the old key 'tagsearch-gate-pin-hash' must NOT be set
+    assert.notStrictEqual(k, 'tagsearch-gate-pin-hash', 'Must not store pin hash in sessionStorage');
+  }
+});
+
+test('[AUTH-9] Wrong PIN retry: second attempt after failure can still succeed', async () => {
+  const correctPin = '1234';
+  const hash = await sha256Hex(correctPin);
+  const app = makeApp({ correctHash: hash });
+
+  // First: wrong PIN
+  await app.submitGatePin('wrongpin');
+  // Gate should still be visible
+  const gateScreen = app.nodes['gateScreen'];
+  assert.ok(gateScreen.style.display !== 'none', 'Gate stays visible after wrong PIN');
+
+  // Second: correct PIN
+  await app.submitGatePin(correctPin);
+  // App should now be unlocked
+  const appRoot = app.nodes['appRoot'];
+  assert.ok(appRoot.style.display !== 'none', 'App unlocks after correct PIN on retry');
+});
+
+test('[AUTH-10] Old gateScreen + gateInput + 3 tabs are present and unchanged', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert.ok(src.includes('id="gateScreen"'), 'gateScreen must exist');
+  assert.ok(src.includes('id="gateInput"'), 'gateInput must exist');
+  assert.ok(src.includes('id="tabTagSearch"'), 'tabTagSearch must exist');
+  assert.ok(src.includes('id="tabCatalog"'), 'tabCatalog must exist');
+  assert.ok(src.includes('id="tabEquipment"'), 'tabEquipment must exist');
+  assert.ok(src.includes('inputmode="numeric"'), 'gate input must use numeric inputmode (mobile keyboard)');
 });

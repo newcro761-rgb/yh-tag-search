@@ -66,7 +66,7 @@ function app(opts = {}) {
   };
   // Session storage stub — start logged in like existing tests
   const sessionStorage = {
-    _store: { 'tagsearch-gate-ok': '1', ...(opts.sessionStore || {}) },
+    _store: { 'tagsearch-catalog-token': 'catalog.9999999999999.mock', ...(opts.sessionStore || {}) },
     getItem(k) { return this._store[k] ?? null; },
     setItem(k, v) { this._store[k] = v; },
     removeItem(k) { delete this._store[k]; },
