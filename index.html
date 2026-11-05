@@ -317,6 +317,12 @@
     flex: 1;
     min-width: 0;
   }
+  .catalog-type-desc {
+    font-size: 0.78rem;
+    color: var(--fg-muted, var(--muted));
+    font-style: italic;
+    padding-left: 2px;
+  }
   .catalog-row-meta {
     display: flex;
     gap: 8px;
@@ -964,6 +970,9 @@
       <div class="catalog-filters" role="group" aria-label="설비 그룹 선택">
         <span class="filter-label">설비</span>
         <button class="equip-filter equip-filter--active" data-equip="TBN MSV" aria-pressed="true">TBN MSV</button>
+        <button class="equip-filter" data-equip="TBN RSV" aria-pressed="false">TBN RSV</button>
+        <button class="equip-filter" data-equip="TBN CV" aria-pressed="false">TBN CV</button>
+        <button class="equip-filter" data-equip="TBN IV" aria-pressed="false">TBN IV</button>
       </div>
     </div>
     <div id="equipResults" class="catalog-results" aria-live="polite" aria-label="설비 정보"></div>
@@ -2536,6 +2545,14 @@
 
       row.appendChild(top);
 
+      // Drawing type name as description subtitle (dwg_type_name, e.g. "계장루프배선도")
+      if (d.dwg_type_name) {
+        var typeDesc = document.createElement('div');
+        typeDesc.className = 'catalog-type-desc';
+        typeDesc.textContent = d.dwg_type_name;
+        row.appendChild(typeDesc);
+      }
+
       var meta = document.createElement('div');
       meta.className = 'catalog-row-meta';
 
@@ -2558,11 +2575,7 @@
         dateEl.textContent = d.dwg_date;
         meta.appendChild(dateEl);
       }
-      if (d.dwg_type_name) {
-        var typeEl = document.createElement('span');
-        typeEl.textContent = d.dwg_type_name;
-        meta.appendChild(typeEl);
-      }
+      // dwg_type_name now shown as subtitle above the meta row; skip duplication here
 
       // File availability
       if (d.has_file) {
