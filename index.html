@@ -2682,7 +2682,7 @@
     if (catalogQ) params.set('q', catalogQ);
 
     fetch(CATALOG_BASE + '/catalog/drawings?' + params.toString(), {
-      headers: { 'Authorization': 'Bearer ' + catalogToken, 'Cache-Control': 'no-cache' }
+      headers: { 'Authorization': 'Bearer ' + catalogToken }
     })
       .then(function (res) {
         if (res.status === 401) { catalogToken = null; showCatalogStatus('세션이 만료되었습니다. 탭을 다시 클릭해주세요.', true); return null; }
@@ -2772,7 +2772,7 @@
     var params = new URLSearchParams();
     params.set('name', groupName);
     fetch(CATALOG_BASE + '/catalog/equipment?' + params.toString(), {
-      headers: { 'Authorization': 'Bearer ' + catalogToken, 'Cache-Control': 'no-cache' }
+      headers: { 'Authorization': 'Bearer ' + catalogToken }
     })
       .then(function (res) {
         if (res.status === 401) { catalogToken = null; showEquipStatus('세션이 만료되었습니다. 탭을 다시 클릭해주세요.', true); return null; }
