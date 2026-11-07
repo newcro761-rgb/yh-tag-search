@@ -568,6 +568,28 @@
   }
   .pid-title { font-size: 13px; color: var(--fg-muted); margin-top: 4px; }
   .pid-confidence { font-size: 11px; color: var(--fg-faint); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+  /* discipline group header inside pid-block */
+  .dwg-disc-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 14px 0 6px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+  }
+  .dwg-disc-header:first-child { margin-top: 0; }
+  .dwg-disc-est {
+    font-weight: 400;
+    font-style: italic;
+    color: var(--fg-faint);
+    text-transform: none;
+    letter-spacing: 0;
+  }
 
   /* trip banner */
   .banner {
@@ -2077,7 +2099,7 @@
     renderPartial(result);
     var tripSheets = logicSheets.filter(function (s) { return s.categories.indexOf('trip') !== -1 || s.categories.indexOf('interlock') !== -1; });
 
-    // ① 요약 카드
+    // ① 요약 카드 — 나중에 도면 뒤에 붙인다 (도면 우선 표시)
     var primaryDesc = instruments.length ? cleanStr(instruments[0].service_desc) : '';
     var summaryBadges = [];
     if (tripSheets.length) summaryBadges.push(badge('trip', null));
@@ -2086,12 +2108,18 @@
     ['interlock', 'protection'].forEach(function (c) { if (catSeen[c] && !summaryBadges.length) summaryBadges.push(badge(c)); });
 
     var summaryCard = buildEquipmentLedger(result, summaryBadges);
-    results.appendChild(summaryCard);
-    if (tagNote) results.appendChild(buildTagNote(tagNote));
-    if (tagAuto) results.appendChild(buildTagAuto(tagAuto, !!tagNote));
+    // summaryCard 및 tagNote/tagAuto는 도면 섹션 뒤에 삽입 — ② 블록 직후에 append
 
-    // ② P&ID 도면번호
+    // ② P&ID 도면번호 (분야별) — 최우선 표시
     if (drawings.length) {
+      // 도면번호 3번째 자리 코드로 분야 추정 — 추정·미확인 (공식 코드사전 미검토)
+      var DWG_DISC = { UJ: '계측제어 (UJ)', LM: '기계 (LM)', LE: '전기 (LE)', LJ: '미분류 (LJ)' };
+      function dwgDiscCode(no) {
+        if (!no) return null;
+        var parts = String(no).trim().replace(/\s+/g, '').split('-');
+        var c = parts.length >= 3 ? parts[2] : null;
+        return (c && DWG_DISC[c]) ? c : null;
+      }
       var pidItems = drawings.map(function (d) {
         var copyBtn = el('button', { class: 'pid-copy', type: 'button' }, ['복사']);
         copyBtn.addEventListener('click', function () {
@@ -2117,9 +2145,33 @@
           el('div', { class: 'pid-confidence', text: TIER_LABEL[d.tier] || '' })
         ]);
       });
+      // 분야별 묶음 — 2종 이상일 때 분야 헤더를 삽입한다
+      var DWG_DISC_ORDER = ['UJ', 'LM', 'LE', 'LJ'];
+      var pidGrouped = {};
+      drawings.forEach(function (d, i) {
+        var c = dwgDiscCode(d.dwg_no) || '_other';
+        if (!pidGrouped[c]) pidGrouped[c] = [];
+        pidGrouped[c].push(pidItems[i]);
+      });
+      var pidGroupCodes = DWG_DISC_ORDER.filter(function (c) { return pidGrouped[c]; });
+      if (pidGrouped['_other']) pidGroupCodes.push('_other');
+      var pidBlockContent;
+      if (pidGroupCodes.length > 1) {
+        pidBlockContent = [];
+        pidGroupCodes.forEach(function (code) {
+          var label = code === '_other' ? '분류 미확인' : DWG_DISC[code];
+          pidBlockContent.push(el('div', { class: 'dwg-disc-header' }, [
+            el('span', { text: label }),
+            el('span', { class: 'dwg-disc-est', text: ' 추정' })
+          ]));
+          pidGrouped[code].forEach(function (item) { pidBlockContent.push(item); });
+        });
+      } else {
+        pidBlockContent = pidItems;
+      }
       var pidSection = el('div', {}, [
         el('div', { class: 'section-title', text: 'P&ID 도면 · 전체 ' + drawings.length + '건' }),
-        el('div', { class: 'card pid-block' }, pidItems)
+        el('div', { class: 'card pid-block' }, pidBlockContent)
       ]);
       if (pidItems.length > 6) {
         pidItems.slice(6).forEach(function (item) { item.hidden = true; });
@@ -2133,52 +2185,12 @@
       results.appendChild(pidSection);
     }
 
-    // ③ 트립·인터록 배너
-    if (tripSheets.length) {
-      var iconSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
-      var banner = el('div', { class: 'banner' }, [
-        el('span', { html_TRUSTED_STATIC: iconSvg }),
-        el('span', {}, [
-          el('strong', { text: '트립·인터록 관련으로 보이는 시트가 ' + tripSheets.length + '건 있습니다. ' }),
-          '실제 트립 발생 여부는 해당 로직 시트를 직접 확인하세요. (제목 키워드 기반 자동 분류이며 근거로 삼기에 충분하지 않을 수 있습니다.)'
-        ])
-      ]);
-      results.appendChild(banner);
-    } else if (logicSheets.length) {
-      var note = el('div', { class: 'banner' }, [
-        el('span', {}, ['제목 기준으로는 트립 관련 시트가 확인되지 않았습니다. 본문에 포함되어 있을 수 있습니다.'])
-      ]);
-      note.style.background = 'var(--bg-sunken)';
-      note.style.color = 'var(--fg-muted)';
-      results.appendChild(note);
-    }
+    // ①-후 설비대장·태그노트·자동추출 — 도면 섹션 직후에 삽입 (도면 우선)
+    results.appendChild(summaryCard);
+    if (tagNote) results.appendChild(buildTagNote(tagNote));
+    if (tagAuto) results.appendChild(buildTagAuto(tagAuto, !!tagNote));
 
-    // ④ 로직 사용처
-    if (logicSheets.length) {
-      var logicItems = logicSheets.map(function (s, idx) {
-        var isTrip = s.categories.indexOf('trip') !== -1;
-        var sourceBadge = s.sources.usage
-          ? el('span', { class: 'badge badge-confirmed', text: '신호 연결' })
-          : el('span', { class: 'badge badge-mentioned', text: '본문 언급' });
-        var metaRow = el('div', { class: 'logic-meta' }, s.categories.map(function (c) { return badge(c); }).concat([sourceBadge]));
-        return el('div', { class: 'logic-item' + (isTrip ? ' is-trip' : '') + (idx === 0 ? ' is-first-item' : '') }, [
-          el('div', { class: 'logic-sheet-no', text: s.drop_no + '/' + s.sheet_no }),
-          el('div', { class: 'logic-body' }, [
-            el('div', { class: 'logic-title', text: s.title || '(제목 없음)' }),
-            metaRow,
-            logicPageUrl(s) ? el('a', { class: 'pid-open', href: logicPageUrl(s), target: '_blank', rel: 'noopener', text: '원본 p.' + s.pdf_page + ' 열기' }) : null,
-            s.pdf_page != null ? el('div', { class: 'logic-page', text: '도면집 p.' + s.pdf_page + ' · ' + s.logic_book }) : el('div', { class: 'logic-page', text: s.logic_book })
-          ])
-        ]);
-      });
-      var logicSection = el('div', {}, [
-        el('div', { class: 'section-title', text: '로직 사용처 (' + logicSheets.length + '건)' }),
-        el('div', { class: 'card logic-list' }, logicItems)
-      ]);
-      results.appendChild(logicSection);
-    }
-
-    // ⑤ 현장계기 정보 — 값마다 어느 문서에서 왔는지 같이 보여 준다
+    // ③ 현장계기 정보 — 도면번호 확인 후 사양을 먼저 보여 준다
     function docLink(filePath, page, label) {
       var u = drawingUrl(filePath);
       if (!u) return label;
@@ -2267,6 +2279,51 @@
       results.appendChild(instSection);
     }
     if (valueConflicts.length) results.appendChild(buildConflicts(valueConflicts));
+
+    // ④ 트립·인터록 배너
+    if (tripSheets.length) {
+      var iconSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>';
+      var banner = el('div', { class: 'banner' }, [
+        el('span', { html_TRUSTED_STATIC: iconSvg }),
+        el('span', {}, [
+          el('strong', { text: '트립·인터록 관련으로 보이는 시트가 ' + tripSheets.length + '건 있습니다. ' }),
+          '실제 트립 발생 여부는 해당 로직 시트를 직접 확인하세요. (제목 키워드 기반 자동 분류이며 근거로 삼기에 충분하지 않을 수 있습니다.)'
+        ])
+      ]);
+      results.appendChild(banner);
+    } else if (logicSheets.length) {
+      var note = el('div', { class: 'banner' }, [
+        el('span', {}, ['제목 기준으로는 트립 관련 시트가 확인되지 않았습니다. 본문에 포함되어 있을 수 있습니다.'])
+      ]);
+      note.style.background = 'var(--bg-sunken)';
+      note.style.color = 'var(--fg-muted)';
+      results.appendChild(note);
+    }
+
+    // ⑤ 로직 사용처
+    if (logicSheets.length) {
+      var logicItems = logicSheets.map(function (s, idx) {
+        var isTrip = s.categories.indexOf('trip') !== -1;
+        var sourceBadge = s.sources.usage
+          ? el('span', { class: 'badge badge-confirmed', text: '신호 연결' })
+          : el('span', { class: 'badge badge-mentioned', text: '본문 언급' });
+        var metaRow = el('div', { class: 'logic-meta' }, s.categories.map(function (c) { return badge(c); }).concat([sourceBadge]));
+        return el('div', { class: 'logic-item' + (isTrip ? ' is-trip' : '') + (idx === 0 ? ' is-first-item' : '') }, [
+          el('div', { class: 'logic-sheet-no', text: s.drop_no + '/' + s.sheet_no }),
+          el('div', { class: 'logic-body' }, [
+            el('div', { class: 'logic-title', text: s.title || '(제목 없음)' }),
+            metaRow,
+            logicPageUrl(s) ? el('a', { class: 'pid-open', href: logicPageUrl(s), target: '_blank', rel: 'noopener', text: '원본 p.' + s.pdf_page + ' 열기' }) : null,
+            s.pdf_page != null ? el('div', { class: 'logic-page', text: '도면집 p.' + s.pdf_page + ' · ' + s.logic_book }) : el('div', { class: 'logic-page', text: s.logic_book })
+          ])
+        ]);
+      });
+      var logicSection = el('div', {}, [
+        el('div', { class: 'section-title', text: '로직 사용처 (' + logicSheets.length + '건)' }),
+        el('div', { class: 'card logic-list' }, logicItems)
+      ]);
+      results.appendChild(logicSection);
+    }
 
     // ⑥ 관련 도면 (접힘)
     var relGroups = Object.keys(relatedDrawings);

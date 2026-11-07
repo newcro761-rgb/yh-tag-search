@@ -309,3 +309,73 @@ test('wiring and doc_refs fill connection fields, add a related-docs section, an
  assert.ok(links.some(h=>/Trip\.pdf#page=3$/.test(h)));
  assert.ok(links.every(h=>!/javascript:/i.test(h)));
 });
+
+test('drawings with mixed disciplines UJ/LM group into separate discipline headers with 추정 label',()=>{
+  const {api,nodes}=app();
+  const drawings=[
+    {dwg_no:'L-31300-UJ-105-001',title:'BOP P&ID',tier:'t1',file_path:null,doc_meta:null},
+    {dwg_no:'L-31300-LM-105-001',title:'TG Mech',tier:'t1',file_path:null,doc_meta:null},
+    {dwg_no:'L-31300-UJ-105-002',title:'BOP P&ID 2',tier:'t1',file_path:null,doc_meta:null},
+  ];
+  api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'X'}]},logicSheets:[],drawings,manualSearch:[],gen:{variants:[]},callLog:[]});
+  const t=nodes.results.textContent;
+  // Both discipline headers appear
+  assert.match(t,/계측제어 \(UJ\)/);
+  assert.match(t,/기계 \(LM\)/);
+  // 추정 caveat present
+  assert.match(t,/추정/);
+  // Drawing numbers present
+  assert.match(t,/L-31300-UJ-105-001/);
+  assert.match(t,/L-31300-LM-105-001/);
+  // UJ group appears before LM group (UJ first in DWG_DISC_ORDER)
+  const ujPos=t.indexOf('계측제어 (UJ)');
+  const lmPos=t.indexOf('기계 (LM)');
+  assert.ok(ujPos<lmPos,'UJ disc header precedes LM disc header');
+});
+
+test('drawings with single discipline show no group headers',()=>{
+  const {api,nodes}=app();
+  const drawings=[
+    {dwg_no:'L-31300-UJ-105-001',title:'BOP P&ID',tier:'t1',file_path:null,doc_meta:null},
+    {dwg_no:'L-31300-UJ-105-002',title:'BOP P&ID 2',tier:'t1',file_path:null,doc_meta:null},
+  ];
+  api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'X'}]},logicSheets:[],drawings,manualSearch:[],gen:{variants:[]},callLog:[]});
+  const t=nodes.results.textContent;
+  // Drawing numbers present but no discipline group header
+  assert.match(t,/L-31300-UJ-105-001/);
+  assert.doesNotMatch(t,/계측제어 \(UJ\)/);
+});
+
+test('instrument section appears before logic section (priority: drawing→instrument→logic)',()=>{
+  const {api,nodes}=app();
+  const lookup={...emptyLookup,field_instruments:[{raw_tag:'TB-TE01A',service_desc:'BEARING TEMP',maker:'WEED',model_no:'TG-100',signal_range:'0-500',eng_unit:'deg C',source_doc:'BOP-INDEX'}]};
+  const logicSheets=[{drop_no:'23',sheet_no:'302',title:'LUBE OIL TRIP',categories:['trip'],sources:{usage:true},pdf_page:5,logic_book:'MAIN',is_first:true}];
+  api.renderResults({rawInput:'TB-TE01A',lookup,logicSheets,drawings:[],manualSearch:[],gen:{variants:[]},callLog:[]});
+  // Both sections present in DOM
+  const allNodes=[];(function walk(n){allNodes.push(n);(n.children||[]).forEach(walk);})(nodes.results);
+  const instNodes=allNodes.filter(n=>n.className==='section-title' && (n.text||'').includes('현장계기 정보'));
+  const logicNodes=allNodes.filter(n=>n.className==='section-title' && (n.text||'').includes('로직 사용처'));
+  assert.ok(instNodes.length>0,'현장계기 정보 section-title present');
+  assert.ok(logicNodes.length>0,'로직 사용처 section-title present');
+  // Find DOM insertion order via results.children
+  const childTexts=nodes.results.children.map(c=>c.textContent);
+  const instIdx=childTexts.findIndex(t=>t.includes('현장계기 정보'));
+  const logicIdx=childTexts.findIndex(t=>t.includes('로직 사용처') && !t.includes('현장계기'));
+  assert.ok(instIdx<logicIdx,'현장계기 정보 section precedes 로직 사용처 section in results');
+});
+
+test('P&ID drawing section appears before equipment ledger (설비대장) in results',()=>{
+  const {api,nodes}=app();
+  const equipment_ledger={records:[{tag:'X',source:{file:'f.xlsx',sheet:'S',row:1},specification:'spec',material_no:'M1',service:'svc',drawing_no:'D1',stock_snapshot:1,purchases:[],manufacturer:'mfr',model:'mod',storage:'shelf',notes:'',drawings:[]}]};
+  const drawings=[
+    {dwg_no:'L-31300-UJ-105-001',title:'BOP P&ID',tier:'t1',file_path:null,doc_meta:null},
+    {dwg_no:'L-31300-LM-105-001',title:'TG Mech',tier:'t1',file_path:null,doc_meta:null},
+  ];
+  api.renderResults({rawInput:'X',lookup:{...emptyLookup,field_instruments:[{raw_tag:'X'}],equipment_ledger},logicSheets:[],drawings,manualSearch:[],gen:{variants:[]},callLog:[]});
+  const childTexts=nodes.results.children.map(c=>c.textContent);
+  const pidIdx=childTexts.findIndex(t=>t.includes('P&ID 도면'));
+  const ledgerIdx=childTexts.findIndex(t=>t.includes('설비대장'));
+  assert.ok(pidIdx>=0,'P&ID 도면 section present');
+  assert.ok(ledgerIdx>=0,'설비대장 section present');
+  assert.ok(pidIdx<ledgerIdx,'P&ID drawing section precedes 설비대장 (equipment ledger) in results');
+});
