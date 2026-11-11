@@ -2875,7 +2875,7 @@
     } else {
       kids.push(el('p', { class: 'auto-muted', text: '트립·인터록 시트와의 연결은 찾지 못했습니다 (2단계 이내).' }));
     }
-    return el('div', {}, [
+    return el('div', { id: 'sec-auto' }, [
       el('div', { class: 'section-title', text: '자동 추출 (검토 전)' }),
       el('div', { class: 'card card-pad' }, kids)
     ]);
@@ -3268,10 +3268,16 @@
       (lookup && lookup.doc_refs && (lookup.doc_refs.refs || []).length));
     var tripSheets = logicSheets.filter(function (s) { return s.categories.indexOf('trip') !== -1 || s.categories.indexOf('interlock') !== -1; });
 
+    // 트립·인터록 상태는 기존 두 신호를 합쳐 하나로 쓴다 (더 심각한 쪽 채택, 낮추지 않음):
+    //  ① 제목 키워드 분류(tripSheets)  ② 자동 추출 tag_auto.trip_paths(시트 연결, buildTagAuto와 같은 조건)
+    var autoTripPaths = tagAuto && Array.isArray(tagAuto.trip_paths) ? tagAuto.trip_paths.filter(Array.isArray) : [];
+    var autoTrip = autoTripPaths.length > 0;
+    var tripAny = tripSheets.length > 0 || autoTrip;
+
     // ① 요약 카드 — 나중에 도면 뒤에 붙인다 (도면 우선 표시)
     var primaryDesc = instruments.length ? cleanStr(instruments[0].service_desc) : '';
     var summaryBadges = [];
-    if (tripSheets.length) summaryBadges.push(badge('trip', null));
+    if (tripAny) summaryBadges.push(badge('trip', null));
     var catSeen = {};
     logicSheets.forEach(function (s) { s.categories.forEach(function (c) { catSeen[c] = true; }); });
     ['interlock', 'protection'].forEach(function (c) { if (catSeen[c] && !summaryBadges.length) summaryBadges.push(badge(c)); });
@@ -3508,18 +3514,29 @@
       el('p', { class: 'answer-tag', text: result.rawInput.trim().toUpperCase() }),
       primaryDesc ? el('p', { class: 'answer-desc', text: primaryDesc }) : null
     ];
-    // 1) 트립·인터록: 배너와 같은 판정(tripSheets / logicSheets)만 사용
-    if (tripSheets.length) {
+    // 1) 트립·인터록: 제목 키워드 판정(tripSheets)과 시트 연결 판정(tag_auto)을 합쳐 더 심각한 쪽을 보인다
+    if (tripAny) {
+      var tripHead, tripBasis, tripJump;
+      if (tripSheets.length && autoTrip) {
+        tripHead = '관련 시트 ' + tripSheets.length + '건 있음'; tripBasis = ' (제목 키워드 + 시트 연결 기준)';
+        tripJump = jump('sec-logic', '로직 사용처 ↓');
+      } else if (tripSheets.length) {
+        tripHead = '관련 시트 ' + tripSheets.length + '건 있음'; tripBasis = ' (제목 키워드 기준)';
+        tripJump = jump('sec-logic', '로직 사용처 ↓');
+      } else {
+        tripHead = '트립·인터록 시트와 ' + (tagAuto.trip_level === 'direct' ? '직접' : '간접(2단계)') + ' 연결됨';
+        tripBasis = ' (시트 연결 기준, 제목 키워드 시트는 없음)';
+        tripJump = jump('sec-auto', '자동 추출 ↓');
+      }
       answerKids.push(el('div', { class: 'answer-line is-trip' }, [
         el('span', { class: 'answer-label', text: '트립·인터록' }),
-        el('strong', { text: '관련 시트 ' + tripSheets.length + '건 있음' }),
-        ' (제목 키워드 기반)', jump('sec-logic', '로직 사용처 ↓')
+        el('strong', { text: tripHead }), tripBasis, tripJump
       ]));
     } else if (logicSheets.length) {
       answerKids.push(el('div', { class: 'answer-line is-logic' }, [
         el('span', { class: 'answer-label', text: '트립·인터록' }),
         el('strong', { text: '로직 사용처 ' + logicSheets.length + '건, 트립 키워드 시트 없음' }),
-        ' (제목 기준)', jump('sec-logic', '로직 사용처 ↓')
+        ' (제목 기준' + (tagAuto ? ', 시트 연결 기준으로도 찾지 못함' : '') + ')', jump('sec-logic', '로직 사용처 ↓')
       ]));
     } else {
       answerKids.push(el('div', { class: 'answer-line is-none' }, [
