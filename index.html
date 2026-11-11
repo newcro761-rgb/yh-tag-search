@@ -3258,6 +3258,14 @@
     }
 
     renderPartial(result);
+    // 키워드 입력 판정: 태그 형식이 아니고, 태그 조회에서 태그 고유 자료가 하나도 오지 않은 경우.
+    // (search_logic 검색 히트는 입력 문자열 일치일 뿐 태그 자료가 아니므로 sources.usage 시트만 센다.)
+    var keywordMode = !(result.gen && result.gen.parsed) && !(
+      instruments.length || setpoints.length || drawings.length || manualMentions.length ||
+      Object.keys(relatedDrawings).length || tagNote || tagAuto || valueConflicts.length ||
+      ledgerRecords(lookup).length || logicSheets.some(function (s) { return s.sources && s.sources.usage; }) ||
+      (lookup && lookup.wiring && (lookup.wiring.records || []).length) ||
+      (lookup && lookup.doc_refs && (lookup.doc_refs.refs || []).length));
     var tripSheets = logicSheets.filter(function (s) { return s.categories.indexOf('trip') !== -1 || s.categories.indexOf('interlock') !== -1; });
 
     // ① 요약 카드 — 나중에 도면 뒤에 붙인다 (도면 우선 표시)
@@ -3268,7 +3276,7 @@
     logicSheets.forEach(function (s) { s.categories.forEach(function (c) { catSeen[c] = true; }); });
     ['interlock', 'protection'].forEach(function (c) { if (catSeen[c] && !summaryBadges.length) summaryBadges.push(badge(c)); });
 
-    var summaryCard = buildEquipmentLedger(result, summaryBadges);
+    var summaryCard = keywordMode ? null : buildEquipmentLedger(result, summaryBadges);
     // summaryCard 및 tagNote/tagAuto는 도면 섹션 뒤에 삽입 — ② 블록 직후에 append
 
     // 열기 URL·복사 버튼 (답 카드와 P&ID 목록이 같이 쓴다)
@@ -3483,7 +3491,7 @@
         ]);
       });
       logicSection = el('div', { id: 'sec-logic' }, [
-        el('div', { class: 'section-title', text: '로직 사용처 (' + logicSheets.length + '건)' }),
+        el('div', { class: 'section-title', text: (keywordMode ? '로직 시트 검색결과 (' : '로직 사용처 (') + logicSheets.length + '건)' }),
         el('div', { class: 'card logic-list' }, logicItems)
       ]);
     }
@@ -3552,15 +3560,20 @@
       answerKids.push(el('div', { class: 'answer-line is-missing' }, [el('span', { class: 'answer-label', text: '제조사 · 모델' }), '조회한 자료에 없음']));
     }
     answerKids.push(el('p', { class: 'answer-caveat', text: '검토 전 자료입니다. 최신성·현장 일치 여부는 확인되지 않았습니다. 미확인은 값 없음, 미확보는 근거 없음을 뜻합니다.' }));
-    results.appendChild(el('div', { class: 'card answer-card' }, answerKids));
-    if (banner) results.appendChild(banner);
-    if (tagNote) results.appendChild(buildTagNote(tagNote));
-    if (tagAuto) results.appendChild(buildTagAuto(tagAuto, !!tagNote));
-    if (logicSection) results.appendChild(logicSection);
-    if (pidSection) results.appendChild(pidSection);
-    if (instSection) results.appendChild(instSection);
-    if (valueConflicts.length) results.appendChild(buildConflicts(valueConflicts));
-    results.appendChild(summaryCard);
+    if (keywordMode) {
+      results.appendChild(el('div', { class: 'section-title', text: '키워드로 검색한 결과입니다 (태그 형식 아님, 태그 자료는 조회되지 않음)' }));
+      if (logicSection) results.appendChild(logicSection);
+    } else {
+      results.appendChild(el('div', { class: 'card answer-card' }, answerKids));
+      if (banner) results.appendChild(banner);
+      if (tagNote) results.appendChild(buildTagNote(tagNote));
+      if (tagAuto) results.appendChild(buildTagAuto(tagAuto, !!tagNote));
+      if (logicSection) results.appendChild(logicSection);
+      if (pidSection) results.appendChild(pidSection);
+      if (instSection) results.appendChild(instSection);
+      if (valueConflicts.length) results.appendChild(buildConflicts(valueConflicts));
+      results.appendChild(summaryCard);
+    }
 
     // ⑥ 관련 도면 (접힘)
     var relGroups = Object.keys(relatedDrawings);
