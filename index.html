@@ -2214,7 +2214,8 @@
   // §0 접근 게이트 — 서버 인증 (PIN → /catalog/session → signed token)
   // 클라이언트에 해시 상수 없음 — 검증은 서버에서만 수행
   // ======================================================================
-  var CATALOG_SESSION_URL = 'https://plant-assistant-mcp.newcro761.workers.dev/catalog/session';
+  var API_BASE = 'https://plant-assistant-mcp.newcro761.workers.dev';
+  var CATALOG_SESSION_URL = API_BASE + '/catalog/session';
 
   function sha256Hex(text) {
     var enc = new TextEncoder().encode(text);
@@ -2235,6 +2236,10 @@
   // catalogToken lives here — set at gate unlock, shared by all tabs
     var catalogToken = null;
     var CATALOG_TOKEN_KEY = 'tagsearch-catalog-token';
+    // initApp()은 페이지 로드당 한 번만 실행(이벤트 리스너 중복 바인딩 방지).
+    // initApp이 resumeAfterUnlock을 채우며, 재잠금 후 재해제 시 현재 화면만 다시 그린다.
+    var appInitialized = false;
+    var resumeAfterUnlock = null;
 
     function unlockApp(token) {
       catalogToken = token;
@@ -2245,7 +2250,23 @@
       }
       gateScreen.style.display = 'none';
       appRoot.style.display = '';
-      initApp();
+      if (!appInitialized) {
+        appInitialized = true;
+        initApp();
+      } else if (resumeAfterUnlock) {
+        resumeAfterUnlock();
+      }
+    }
+
+    // 세션 만료/위조 토큰: 토큰 폐기 후 게이트 화면으로 복귀
+    function relock(message) {
+      catalogToken = null;
+      try { sessionStorage.removeItem(CATALOG_TOKEN_KEY); } catch (_) {}
+      gateScreen.style.display = '';
+      appRoot.style.display = 'none';
+      gateError.textContent = message || '';
+      gateInput.value = '';
+      gateInput.focus();
     }
 
     // Restore token from previous session (page refresh / back-navigation)
@@ -2296,7 +2317,7 @@
   // §1 설정 (initApp 내부에서 실행 — PIN 통과 후에만 동작)
   // ======================================================================
   function initApp() {
-  var MCP_URL = 'https://plant-assistant-mcp.newcro761.workers.dev/mcp/2Gr6faXzdeHBxjNbc1kU7YCrufw42BmmRvtdEHRBbfkweMKwSF5vEckX0_WWT9bO';
+  var TOOL_URL = API_BASE + '/catalog/tool';
 
   // 도면 파일 서빙 베이스 URL(미니PC rclone serve + Cloudflare Tunnel).
   // 비워두면 '열기' 링크를 아예 만들지 않는다 — 주소가 정해지면 여기만 채우면 된다.
@@ -2331,54 +2352,13 @@
   var searchBtn = document.getElementById('searchBtn');
 
   // ======================================================================
-  // §2 MCP 클라이언트 — 세션 관리 / SSE 파싱 / 재시도
+  // §2 REST 클라이언트 — 인증 토큰(Bearer)으로 /catalog/tool 호출 / 오류 분류
   // ======================================================================
-  var sessionId = null;
-  var sessionPromise = null;
-  var callIdSeq = 1;
-
   function McpError(kind, message) {
     this.kind = kind;
     this.message = message;
   }
   McpError.prototype = Object.create(Error.prototype);
-
-  function ensureSession() {
-    if (sessionId) return Promise.resolve(sessionId);
-    if (sessionPromise) return sessionPromise;
-
-    sessionPromise = fetchWithTimeout(MCP_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream'
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: callIdSeq++,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2024-11-05',
-          capabilities: {},
-          clientInfo: { name: 'tag-search-web', version: '1.0' }
-        }
-      })
-    }).then(function (res) {
-      if (!res.ok) throw new McpError('network', 'HTTP ' + res.status);
-      var sid = res.headers.get('mcp-session-id');
-      if (!sid) throw new McpError('session', 'SESSION_HEADER_MISSING');
-      sessionId = sid;
-      return sid;
-    }).catch(function (err) {
-      sessionPromise = null;
-      throw err;
-    });
-
-    return sessionPromise.then(function (sid) {
-      sessionPromise = null;
-      return sid;
-    });
-  }
 
   function fetchWithTimeout(url, options) {
     var controller = new AbortController();
@@ -2394,72 +2374,37 @@
       });
   }
 
-  function parseSse(rawText) {
-    var payloads = rawText.split(/\r?\n/).filter(function (line) { return /^data:/.test(line); })
-      .map(function (line) { return line.slice(5).trim(); }).filter(function (line) { return line !== '[DONE]'; });
-    if (!payloads.length) payloads = [rawText];
-    for (var i = 0; i < payloads.length; i++) {
-      var envelope;
-      try { envelope = JSON.parse(payloads[i]); } catch (e) { continue; }
-      if (envelope.error) throw new McpError('rpc', envelope.error.message || 'RPC_ERROR');
-      if (!envelope.result) continue;
-      var result = envelope.result;
-      if (result.isError) throw new McpError('rpc', '조회 도구가 오류를 반환했습니다.');
-      var content = result.content && result.content[0];
-      if (!content || typeof content.text !== 'string') throw new McpError('parse', 'EMPTY_RESPONSE');
-      var data;
-      try { data = JSON.parse(content.text); } catch (e) { throw new McpError('parse', 'INVALID_TOOL_JSON'); }
-      if (!data || typeof data !== 'object') throw new McpError('parse', 'INVALID_TOOL_DATA');
-      if (data.error) throw new McpError('rpc', String(data.error));
-      return data;
-    }
-    throw new McpError('parse', 'NO_RESULT');
-  }
-
-  function isSessionError(res, err) {
-    if (res && (res.status === 400 || res.status === 404)) return true;
-    if (err instanceof McpError && err.kind === 'rpc') {
-      var msg = (err.message || '') + '';
-      if (/session/i.test(msg) || /mcp-session-id/i.test(msg)) return true;
-      if (err.detail && err.detail.code === -32000) return true;
-    }
-    return false;
-  }
-
-  function callTool(name, args, _retried) {
-    return ensureSession().then(function (sid) {
-      return fetchWithTimeout(MCP_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json, text/event-stream',
-          'mcp-session-id': sid
-        },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: callIdSeq++,
-          method: 'tools/call',
-          params: { name: name, arguments: args }
-        })
-      }).then(function (res) {
-        return res.text().then(function (raw) {
-          if (!res.ok || /session/i.test(raw) && res.status >= 400) {
-            if (isSessionError(res, null) && !_retried) {
-              sessionId = null;
-              return callTool(name, args, true);
-            }
-            throw new McpError('network', 'HTTP ' + res.status);
+  function callTool(name, args) {
+    var sentToken = catalogToken;
+    // 이미 재잠금된 상태(병렬 호출 중 하나가 401을 받은 경우)에서는 요청하지 않는다
+    if (!sentToken) return Promise.reject(new McpError('auth', 'NO_TOKEN'));
+    return fetchWithTimeout(TOOL_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + sentToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ name: name, arguments: args })
+    }).then(function (res) {
+      return res.text().then(function (raw) {
+        var data = null;
+        var parsed = true;
+        try { data = JSON.parse(raw); } catch (e) { parsed = false; }
+        if (res.status === 401) {
+          // 병렬 호출이 동시에 401을 받아도 한 번만 재잠금 (그 사이 새 토큰이 들어왔으면 건드리지 않음)
+          if (catalogToken === sentToken) relock('세션이 만료되었습니다. PIN을 다시 입력하세요.');
+          throw new McpError('auth', 'HTTP 401');
+        }
+        if (!res.ok) {
+          if ((res.status === 400 || res.status === 404) && parsed && data && data.error) {
+            throw new McpError('rpc', String(data.error));
           }
-          try {
-            return parseSse(raw);
-          } catch (err) {
-            if (isSessionError(res, err) && !_retried) {
-              sessionId = null;
-              return callTool(name, args, true);
-            }
-            throw err;
-          }
-        });
+          throw new McpError('network', 'HTTP ' + res.status);
+        }
+        if (!parsed) throw new McpError('parse', 'INVALID_TOOL_JSON');
+        if (!data || typeof data !== 'object') throw new McpError('parse', 'INVALID_TOOL_DATA');
+        if (data.error) throw new McpError('rpc', String(data.error));
+        return data;
       });
     });
   }
@@ -2549,13 +2494,13 @@
 
     var lookupPromise = callTool('lookup_tag', { tag: gen.forLookup })
       .then(function (data) { logCall('lookup_tag(' + gen.forLookup + ') OK'); return data; })
-      .catch(function (err) { logCall('lookup_tag(' + gen.forLookup + ') FAIL: ' + err.message); return null; });
+      .catch(function (err) { if (err && err.kind === 'auth') throw err; logCall('lookup_tag(' + gen.forLookup + ') FAIL: ' + err.message); return null; });
 
     // 로직해설서 자유검색 — 태그든 키워드("Governor Free" 등)든 입력 원문 그대로 병렬 조회.
     // 태그 검색 흐름과 완전히 독립적이라 실패해도 나머지 결과에 영향 없음.
     var manualSearchPromise = callTool('search_manual', { query: rawInput.trim() })
       .then(function (data) { logCall('search_manual(' + rawInput.trim() + ') -> ' + ((data.results || []).length) + '건'); return data; })
-      .catch(function (err) { logCall('search_manual FAIL: ' + err.message); return null; });
+      .catch(function (err) { if (err && err.kind === 'auth') throw err; logCall('search_manual FAIL: ' + err.message); return null; });
 
     function searchLogicVariants(book, fallback) {
       return Promise.all(gen.variants.map(function (v) {
@@ -2566,6 +2511,7 @@
             return { variant: v, book: book, data: data };
           })
           .catch(function (err) {
+            if (err && err.kind === 'auth') throw err;
             logCall(label + ' FAIL: ' + err.message);
             return { variant: v, book: book, data: null, error: err };
           });
@@ -2998,7 +2944,6 @@
     if (err instanceof McpError) {
       if (err.kind === 'timeout') msg = '응답이 지연되고 있습니다. 다시 시도해 주세요.';
       else if (err.kind === 'network') msg = '네트워크에 연결할 수 없습니다. 통신 상태를 확인해 주세요.';
-      else if (err.kind === 'session') msg = '서버 연결이 만료되었습니다. 다시 검색해 주세요.';
       else if (err.kind === 'parse') msg = '응답을 해석하지 못했습니다.';
       else if (err.kind === 'rpc') msg = '서버에서 오류를 반환했습니다: ' + err.message;
     }
@@ -3663,6 +3608,7 @@
       pushRecent(tag.trim().toUpperCase());
       renderResults(result);
     }).catch(function (err) {
+      if (err instanceof McpError && err.kind === 'auth') { searchBtn.disabled = false; return; }
       if (token !== currentToken) return;
       renderError(err, tag);
     }).then(function () {
@@ -3709,11 +3655,12 @@
     }
   }
   initFromHash();
+  resumeAfterUnlock = initFromHash;
 
   // ======================================================================
   // §CATALOG — 도면 자료실 탭
   // ======================================================================
-  var CATALOG_BASE = 'https://plant-assistant-mcp.newcro761.workers.dev';
+  var CATALOG_BASE = API_BASE;
   // catalogToken is set by the front gate (§0) and shared here
   var catalogPage = 1;
   var catalogDiscipline = '';
@@ -3967,7 +3914,7 @@
       headers: { 'Authorization': 'Bearer ' + catalogToken }
     })
       .then(function (res) {
-        if (res.status === 401) { catalogToken = null; showCatalogStatus('세션이 만료되었습니다. 탭을 다시 클릭해주세요.', true); return null; }
+        if (res.status === 401) { relock('세션이 만료되었습니다. PIN을 다시 입력하세요.'); return null; }
         if (!res.ok) { showCatalogStatus('서버 오류 (' + res.status + ')', true); return null; }
         return res.json();
       })
@@ -4057,7 +4004,7 @@
       headers: { 'Authorization': 'Bearer ' + catalogToken }
     })
       .then(function (res) {
-        if (res.status === 401) { catalogToken = null; showEquipStatus('세션이 만료되었습니다. 탭을 다시 클릭해주세요.', true); return null; }
+        if (res.status === 401) { relock('세션이 만료되었습니다. PIN을 다시 입력하세요.'); return null; }
         if (!res.ok) { showEquipStatus('서버 오류 (' + res.status + ')', true); return null; }
         return res.json();
       })
