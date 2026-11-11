@@ -3236,7 +3236,7 @@
     var lookup = result.lookup;
     var instruments = (lookup && lookup.field_instruments) || [];
     var setpoints = (lookup && lookup.setpoints) || [];
-    var provenance = (lookup && lookup.instrument_provenance) || [];
+    var provenance = (lookup && Array.isArray(lookup.instrument_provenance)) ? lookup.instrument_provenance : [];
     var manualMentions = (lookup && lookup.manual_mentions) || [];
     var relatedDrawings = (lookup && lookup.related_drawings) || {};
     var tagNote = lookup && lookup.tag_note && cleanStr(lookup.tag_note.note) ? lookup.tag_note : null;
@@ -3422,15 +3422,24 @@
           }
         }
         var srcLabel = SOURCE_LABEL[fi.source_doc] || cleanStr(fi.source_doc);
-        var pv = fi.source_doc === 'BOP-INDEX' ? provenance[0] : null;
-        if (pv && pv.status === 'matches') {
-          rowEl('출처', [srcLabel + ' · 공식 인덱스 ', docLink(pv.file_path, pv.pdf_page, pv.doc_no + (pv.pdf_page ? ' p.' + pv.pdf_page : '')), '와 일치']);
-        } else if (pv && pv.status === 'differs') {
-          rowEl('출처', [srcLabel + ' · 공식 인덱스 ', docLink(pv.file_path, pv.pdf_page, pv.doc_no + (pv.pdf_page ? ' p.' + pv.pdf_page : '')), '와 다름 — ' + cleanStr(pv.diff_note)]);
-        } else if (pv && pv.status === 'not_in_official') {
-          row('출처', srcLabel + ' · 공식 인덱스(' + pv.doc_no + ')에 없는 태그');
-        } else if (srcLabel) {
-          row('출처', srcLabel);
+        // 공식 인덱스 대조(provenance) — 모든 항목을 보인다. 없거나 비어 있으면 '미확보'로 알린다.
+        var pvList = fi.source_doc === 'BOP-INDEX' ? provenance.filter(function (x) { return x && typeof x === 'object'; }) : [];
+        function pvNo(x) { return cleanStr(x.doc_no) || '문서번호 미확인'; }
+        function pvLink(x) { return docLink(x.file_path, x.pdf_page, pvNo(x) + (x.pdf_page ? ' p.' + x.pdf_page : '')); }
+        function pvKids(x, lead) {
+          if (x.status === 'matches') return [lead + '공식 인덱스 ', pvLink(x), '와 일치'];
+          if (x.status === 'differs') return [lead + '공식 인덱스 ', pvLink(x), '와 다름' + (cleanStr(x.diff_note) ? ' — ' + cleanStr(x.diff_note) : '')];
+          if (x.status === 'not_in_official') return [lead + '공식 인덱스(' + pvNo(x) + ')에 없는 태그'];
+          return null;
+        }
+        if (!pvList.length) {
+          if (srcLabel) row('출처', srcLabel + (fi.source_doc === 'BOP-INDEX' ? ' · 공식 인덱스 대조 자료 미확보' : ''));
+        } else {
+          pvList.forEach(function (x, xi) {
+            var lead = xi === 0 && srcLabel ? srcLabel + ' · ' : '';
+            rowEl(xi === 0 ? '출처' : '공식 인덱스 대조 ' + (xi + 1),
+              pvKids(x, lead) || [lead + '공식 인덱스 ', pvLink(x), ' — 대조 상태 미확인']);
+          });
         }
         return el('div', { class: 'instrument-block' }, [
           instruments.length > 1 ? el('div', { class: 'instrument-heading', text: (idx + 1) + '. ' + cleanStr(fi.raw_tag || fi.instr_type) }) : null,
