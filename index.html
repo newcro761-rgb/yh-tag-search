@@ -2533,7 +2533,7 @@
 
     function lookupOne(tag) {
       return callTool('lookup_tag', { tag: tag })
-        .then(function (data) { logCall('lookup_tag(' + tag + ') OK'); return data; })
+        .then(function (data) { logCall('lookup_tag(' + tag + ') OK'); if (lookupHasData(data)) gen.matchedLookup = tag; return data; })
         .catch(function (err) { if (err && err.kind === 'auth') throw err; logCall('lookup_tag(' + tag + ') FAIL: ' + err.message); return null; });
     }
     function lookupHasData(d) {
@@ -3556,8 +3556,12 @@
         if (target) target.scrollIntoView({ block: 'start' });
       } });
     }
+    // 입력과 실제 조회된 태그 표기가 다르면(하이픈 없는 입력 등) 어떤 태그로 조회됐는지 밝힌다
+    var shownInput = result.rawInput.trim().toUpperCase();
+    var matchedLookup = result.gen && result.gen.matchedLookup;
     var answerKids = [
-      el('p', { class: 'answer-tag', text: result.rawInput.trim().toUpperCase() }),
+      el('p', { class: 'answer-tag', text: shownInput }),
+      matchedLookup && shownInput.indexOf('-') === -1 && matchedLookup !== shownInput ? el('p', { class: 'answer-desc', text: '조회한 태그 표기: ' + matchedLookup }) : null,
       primaryDesc ? el('p', { class: 'answer-desc', text: primaryDesc }) : null
     ];
     // 1) 트립·인터록: 제목 키워드 판정(tripSheets)과 시트 연결 판정(tag_auto)을 합쳐 더 심각한 쪽을 보인다
