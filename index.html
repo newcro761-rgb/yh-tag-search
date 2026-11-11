@@ -3761,12 +3761,14 @@
   }
 
   var currentToken = 0;
+  var lastHashTag = null; // 앱이 마지막으로 해시에 반영한 태그 — hashchange가 자기 검색을 되풀이하지 않게 한다
   function doSearch(tag) {
     tag = (tag || '').trim();
     if (!tag) { ++currentToken; searchBtn.disabled = false; renderIntro(); return; }
     var token = ++currentToken;
     searchBtn.disabled = true;
     renderLoading(tag);
+    lastHashTag = tag;
     location.hash = '#tag=' + encodeURIComponent(tag);
     runSearch(tag).then(function (result) {
       if (token !== currentToken) return;
@@ -3821,6 +3823,25 @@
   }
   initFromHash();
   resumeAfterUnlock = initFromHash;
+
+  // 뒤로/앞으로 가기: 해시가 바뀌면 그 태그로 다시 검색한다.
+  // 잠금 중에는 아무것도 하지 않는다(잠금 해제 후 resumeAfterUnlock이 현재 해시를 처리).
+  window.addEventListener('hashchange', function () {
+    if (!catalogToken) return;
+    var m = /#tag=([^&]+)/.exec(location.hash);
+    if (m) {
+      var tag;
+      try { tag = decodeURIComponent(m[1]); } catch (e) { return; }
+      if (tag === lastHashTag) return; // 앱이 직접 바꾼 해시(또는 이미 보고 있는 태그)
+      initFromHash();
+    } else if (location.hash === '' || location.hash === '#') {
+      if (lastHashTag === null) return;
+      lastHashTag = null;
+      ++currentToken; searchBtn.disabled = false;
+      renderIntro();
+    }
+    // 그 외 해시(#sec-logic 같은 화면 내 이동)는 무시
+  });
 
   // ======================================================================
   // §CATALOG — 도면 자료실 탭
