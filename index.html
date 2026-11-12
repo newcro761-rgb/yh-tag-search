@@ -2105,6 +2105,9 @@
   .chip { min-height: 40px; display: inline-flex; align-items: center; }
   .answer-line a.answer-jump { display: inline-block; padding: 11px 8px; margin: -11px 0 -11px 0; }
   .ledger-drawings a { display: inline-block; padding: 9px 0; margin: -9px 0; }
+  .row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+  .catalog-row .row-actions { margin-top: 4px; }
+  #equipResults li .pid-copy { margin-left: 8px; vertical-align: middle; }
   @media(prefers-reduced-motion:reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation: none !important; transition: none !important; } }
 
 </style>
@@ -3277,6 +3280,28 @@
     ]);
   }
 
+  // 복사 버튼 — 태그 결과·도면 자료실·설비별 보기가 같이 쓴다
+  function makeCopyBtn(text) {
+    var btn = el('button', { class: 'pid-copy', type: 'button' }, ['복사']);
+    btn.addEventListener('click', function () {
+      copyToClipboard(text);
+      btn.textContent = '복사됨';
+      btn.classList.add('copied');
+      setTimeout(function () { btn.textContent = '복사'; btn.classList.remove('copied'); }, 1400);
+    });
+    return btn;
+  }
+
+  // 태그 검색 탭으로 전환하고 기존 검색 진입점(doSearch)으로 조회 — 해시/뒤로가기 동작 유지
+  function makeTagSearchBtn(tag) {
+    return el('button', { class: 'pid-open', type: 'button', onclick: function () {
+      activateTab('tag');
+      searchInput.value = tag;
+      window.scrollTo(0, 0);
+      doSearch(tag);
+    } }, ['태그 검색으로 보기']);
+  }
+
   function renderResults(result) {
     if (result.isBaseScan) { renderBaseScan(result); return; }
     clear(results);
@@ -3339,16 +3364,6 @@
       var u = drawingUrl(d.file_path);
       if (u && d.pdf_page) u += '#page=' + d.pdf_page;
       return u;
-    }
-    function makeCopyBtn(text) {
-      var btn = el('button', { class: 'pid-copy', type: 'button' }, ['복사']);
-      btn.addEventListener('click', function () {
-        copyToClipboard(text);
-        btn.textContent = '복사됨';
-        btn.classList.add('copied');
-        setTimeout(function () { btn.textContent = '복사'; btn.classList.remove('copied'); }, 1400);
-      });
-      return btn;
     }
     var pidSection = null, instSection = null, banner = null, logicSection = null;
 
@@ -4053,6 +4068,8 @@
         row.appendChild(noteEl);
       }
 
+      if (d.kosep_id) row.appendChild(el('div', { class: 'row-actions' }, [makeCopyBtn(d.kosep_id)]));
+
       frag.appendChild(row);
     });
     catalogResults.appendChild(frag);
@@ -4270,7 +4287,8 @@
           dwgList.style.cssText = 'margin:2px 0 0 12px;padding:0;list-style:disc;font-size:0.75rem;color:var(--muted);';
           t.drawings.forEach(function (d) {
             var li = document.createElement('li');
-            li.textContent = d.dwg_kind + ': ' + d.dwg_no + (d.title ? ' — ' + d.title : '');
+            li.appendChild(document.createTextNode(d.dwg_kind + ': ' + d.dwg_no + (d.title ? ' — ' + d.title : '')));
+            if (d.dwg_no) li.appendChild(makeCopyBtn(d.dwg_no));
             dwgList.appendChild(li);
           });
           row.appendChild(dwgList);
@@ -4281,6 +4299,7 @@
           sheetEl.textContent = '로직 시트: ' + t.logic_sheet_ids.length + '개';
           row.appendChild(sheetEl);
         }
+        if (t.base_tag) row.appendChild(el('div', { class: 'row-actions' }, [makeTagSearchBtn(t.base_tag)]));
         vSect.appendChild(row);
       });
       frag.appendChild(vSect);
@@ -4308,28 +4327,12 @@
           row.appendChild(missEl);
         }
         if (t.logic_sheet_ids && t.logic_sheet_ids.length > 0) {
-          var tagSearch = document.createElement('a');
-          tagSearch.href = '#';
-          tagSearch.style.cssText = 'font-size:0.75rem;margin-left:8px;';
-          tagSearch.textContent = '태그 검색으로 보기';
-          tagSearch.setAttribute('data-tag', t.base_tag);
-          tagSearch.addEventListener('click', function (e) {
-            e.preventDefault();
-            var tag = this.getAttribute('data-tag');
-            var searchInput = document.getElementById('searchInput');
-            var searchForm = document.getElementById('searchForm');
-            if (searchInput && searchForm) {
-              activateTab('tag');
-              searchInput.value = tag;
-              searchForm.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-            }
-          });
-          row.appendChild(tagSearch);
           var sheetEl = document.createElement('div');
           sheetEl.style.cssText = 'font-size:0.75rem;color:var(--muted);margin-top:2px;margin-left:8px;';
           sheetEl.textContent = '로직 시트: ' + t.logic_sheet_ids.length + '개';
           row.appendChild(sheetEl);
         }
+        if (t.base_tag) row.appendChild(el('div', { class: 'row-actions' }, [makeTagSearchBtn(t.base_tag)]));
         cSect.appendChild(row);
       });
       frag.appendChild(cSect);
