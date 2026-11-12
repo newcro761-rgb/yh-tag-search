@@ -3653,7 +3653,7 @@
     }
     answerKids.push(el('p', { class: 'answer-caveat', text: '검토 전 자료입니다. 최신성·현장 일치 여부는 확인되지 않았습니다. 미확인은 값 없음, 미확보는 근거 없음을 뜻합니다.' }));
     if (keywordMode) {
-      results.appendChild(el('div', { class: 'section-title', text: '키워드로 검색한 결과입니다 (태그 형식 아님, 태그 자료는 조회되지 않음)' }));
+      results.appendChild(el('div', { class: 'section-title', text: '태그 자료는 조회되지 않아 키워드로 검색한 결과입니다' }));
       if (logicSection) results.appendChild(logicSection);
     } else {
       results.appendChild(el('div', { class: 'card answer-card' }, answerKids));
