@@ -310,13 +310,13 @@ test('[AUTH-7] After gate unlock, equipment tab also works without additional PI
   assert.strictEqual(sessionCallsAfter, sessionCallsBeforeEquip, 'Equipment tab must not trigger additional /catalog/session call');
 });
 
-test('[CORS] Both protected tabs send only server-allowed request headers', async () => {
+test('[CORS] Catalog, equipment and tool-call requests send only server-allowed request headers', async () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const protectedHeaders = [...src.matchAll(/headers:\s*\{[^}]*'Authorization':\s*'Bearer '[^}]*\}/g)].map(m => m[0]);
-  assert.equal(protectedHeaders.length, 2, 'Both protected request header objects exercised');
+  assert.equal(protectedHeaders.length, 3, 'Catalog, equipment and callTool request header objects exercised');
   for (const headers of protectedHeaders) {
     assert.ok(!headers.includes('Cache-Control'), 'CORS disallows Cache-Control request header');
-    assert.ok(headers.includes('catalogToken'), 'Signed session remains required');
+    assert.ok(/catalogToken|sentToken/.test(headers), 'Signed session remains required');
   }
 });
 

@@ -81,7 +81,7 @@ function app(opts = {}) {
     document: doc,
     sessionStorage,
     localStorage,
-    window: { matchMedia: () => ({ matches: false }) },
+    window: { matchMedia: () => ({ matches: false }), addEventListener() {}, scrollTo() {} },
     location: { hash: '' },
     console,
     setTimeout,
@@ -106,7 +106,7 @@ function app(opts = {}) {
   source = source.replace(
     '  initFromHash();',
     `  globalThis.api = {
-      parseSse, finalize, renderResults, renderBaseScan, runBaseTagScan, runSearch,
+      generateVariants, finalize, renderResults, renderCatalogResults, activateTab, renderEquipmentResults, renderBaseScan, runBaseTagScan, runSearch,
       logicPageUrl, doSearch, setTool(fn){callTool=fn;},
       // Catalog-specific API hooks
       setCatalogFetch(fn) { catalogFetch = fn; },
@@ -191,60 +191,66 @@ test('catalog pane has result list container with empty initial state', () => {
 
 test('renderCatalogResults renders drawing rows with kosep_id, title, discipline_label, rev', () => {
   const { api, nodes } = app();
-  if (typeof api.renderCatalogResults !== 'function') {
-    // Check if function is exposed
-    assert.ok(true, 'renderCatalogResults not yet exposed — will check DOM after UI integration');
-    return;
-  }
-  const rows = [
+  const drawings = [
     { kosep_id: 'L-56000-UJ-157-028', title: 'PRESSURE INSTRUMENT LOOP', discipline_label: '계측제어', rev: 'F00', dwg_type_name: '계장루프배선도', has_file: false },
     { kosep_id: 'L-56000-UJ-157-028-1', title: 'PRESSURE INSTRUMENT LOOP REV B', discipline_label: '계측제어', rev: 'B', dwg_type_name: '계장루프배선도', has_file: false },
   ];
-  api.renderCatalogResults({ rows, total: 2, page: 1, limit: 50, discipline_note: '분야 분류는 추정 값입니다.' });
-  const list = nodes['catalogList'] || nodes['catalog-list'];
-  if (list) {
-    assert.ok(list.textContent.includes('L-56000-UJ-157-028'), 'kosep_id shown');
-    assert.ok(list.textContent.includes('PRESSURE INSTRUMENT LOOP'), 'title shown');
-    assert.ok(list.textContent.includes('계측제어'), 'discipline_label shown');
-  }
+  api.renderCatalogResults({ drawings, total: 2, page: 1, page_size: 50 });
+  const list = nodes['catalogResults'];
+  const text = list.textContent;
+  assert.ok(text.includes('L-56000-UJ-157-028'), 'kosep_id shown');
+  assert.ok(text.includes('PRESSURE INSTRUMENT LOOP'), 'title shown');
+  assert.ok(text.includes('계측제어 (추정)'), 'discipline_label shown with 추정');
+  assert.ok(text.includes('Rev F00'), 'rev shown');
+  assert.equal(tree(list).filter(n => n.className === 'catalog-row').length, 2);
+});
+
+test('catalog rows offer a copy button for the drawing number and no open link (no file_path in catalog data)', () => {
+  const { api, nodes } = app();
+  api.renderCatalogResults({ drawings: [{ kosep_id: 'L-30000-LE-140-001', title: 'ONE LINE DIAGRAM', has_file: true }], total: 1, page: 1, page_size: 50 });
+  const row = tree(nodes['catalogResults']).find(n => n.className === 'catalog-row');
+  const btns = tree(row).filter(n => n.tag === 'button' && n.className === 'pid-copy');
+  assert.equal(btns.length, 1);
+  assert.equal(btns[0].textContent, '복사');
+  assert.equal(tree(row).filter(n => n.tag === 'a').length, 0);
 });
 
 test('catalog result rows show discipline_note provenance caveat', () => {
   const { api, nodes } = app();
-  if (typeof api.renderCatalogResults !== 'function') {
-    assert.ok(true, 'skipped — renderCatalogResults not yet exposed');
-    return;
-  }
   api.renderCatalogResults({
-    rows: [{ kosep_id: 'L-30000-LE-140-001', title: 'ONE LINE DIAGRAM', discipline_label: '전기', rev: 'F00', dwg_type_name: '단선결선도', has_file: false }],
-    total: 1, page: 1, limit: 50,
-    discipline_note: '분야 분류는 추정 값입니다.'
+    drawings: [{ kosep_id: 'L-30000-LE-140-001', title: 'ONE LINE DIAGRAM', discipline_label: '전기', rev: 'F00', dwg_type_name: '단선결선도', has_file: false, discipline_note: '분야 분류는 추정 값입니다.' }],
+    total: 1, page: 1, page_size: 50
   });
-  const list = nodes['catalogList'] || nodes['catalog-list'];
-  if (list) {
-    assert.ok(list.textContent.includes('추정'), 'discipline_note provenance shown');
-  }
+  const text = nodes['catalogResults'].textContent;
+  assert.ok(text.includes('분야 분류는 추정 값입니다.'), 'discipline_note provenance shown');
+});
+
+test('equipment rows offer tag-search button; candidate/verified rows copy drawing numbers', () => {
+  const { api, nodes } = app();
+  api.renderEquipmentResults({
+    name: 'TBN MSV', label: 'TBN MSV', counts: { total: 2, verified: 1, candidate: 1 },
+    verified: [{ base_tag: 'MS-PT01', drawings: [{ dwg_kind: 'P&ID', dwg_no: 'L-30000-UJ-101-001', title: 't' }], logic_sheet_ids: ['a'] }],
+    candidate: [{ base_tag: 'MS-ZT02', logic_sheet_ids: ['b'], missing_sections: ['P&ID'] }]
+  });
+  const all = tree(nodes['equipResults']);
+  const search = all.filter(n => n.tag === 'button' && n.textContent === '태그 검색으로 보기');
+  assert.equal(search.length, 2, 'one tag-search button per tag row');
+  assert.equal(all.filter(n => n.tag === 'button' && n.className === 'pid-copy').length, 1, 'copy button for the one drawing number');
 });
 
 test('existing tag search renderResults still works after catalog changes', () => {
   const { api, nodes } = app();
   const emptyLookup = { usages: [], field_instruments: [] };
   // Should not throw
-  api.renderResults({ rawInput: 'CM-LT01A', lookup: emptyLookup, logicSheets: [], drawings: [], gen: { variants: [] }, callLog: [] });
+  api.renderResults({ rawInput: 'CM-LT01A', lookup: emptyLookup, logicSheets: [], drawings: [], gen: api.generateVariants('CM-LT01A'), callLog: [] });
   assert.ok(nodes.results, 'results node exists');
 });
 
-test('tab switch to 도면 자료실 reveals catalog pane', () => {
+test('tab switch to 도면 자료실 reveals catalog pane and hides the others', () => {
   const { api, nodes } = app();
-  if (typeof api.triggerTabSwitch !== 'function') {
-    assert.ok(true, 'tab switch API not yet exposed');
-    return;
-  }
-  // Switch to catalog tab
-  try { api.triggerTabSwitch('catalog'); } catch (e) { /* tab may not exist yet */ }
-  const catalogPane = nodes['catalogPane'] || nodes['catalog-pane'];
-  if (catalogPane && catalogPane.style) {
-    assert.notEqual(catalogPane.style.display, 'none', 'catalog pane visible after tab switch');
-  }
-  assert.ok(true, 'tab switch does not crash');
+  api.activateTab('catalog');
+  assert.equal(nodes['paneCatalog'].getAttribute('hidden'), undefined, 'catalog pane visible');
+  assert.equal(nodes['paneTagSearch'].getAttribute('hidden'), '');
+  assert.equal(nodes['paneEquipment'].getAttribute('hidden'), '');
+  assert.equal(nodes['tabCatalog'].getAttribute('aria-selected'), 'true');
 });
